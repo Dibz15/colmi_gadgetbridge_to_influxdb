@@ -127,7 +127,7 @@ def extract_data(cur):
         devices[f"dev-{r[0]}"] = {
             "name" : r[1],
             "identifier" : r[2],
-            "alias" : r[3] if len(r[3]) > 0 else "Unset"
+            "alias" : "Unset" if r[3] is None else r[3]
         }
         
 

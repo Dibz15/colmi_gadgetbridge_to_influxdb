@@ -152,8 +152,8 @@ def extract_data(cur):
                     }
             }
         results.append(row)
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts
     
     stress_data_query = ("SELECT TIMESTAMP, DEVICE_ID, TYPE_NUM, STRESS, "
         # Get the next timestamp, so we can chart how long the watch believed that 
@@ -190,8 +190,8 @@ def extract_data(cur):
             row['fields']['stress_exc_sleep'] = r[3]
         
         results.append(row)
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts        
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts        
     
         # Iterate between timestamp and next_ts, creating points to note the stress level
         # convert from ms to s
@@ -260,8 +260,8 @@ def extract_data(cur):
                     }
             }
         results.append(row)
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts                
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts                
 
 
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, PAI_LOW, PAI_MODERATE, PAI_HIGH, TIME_LOW," 
@@ -292,8 +292,8 @@ def extract_data(cur):
                     }
             }
         results.append(row)    
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts              
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts              
 
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL, BATTERY_INDEX FROM BATTERY_LEVEL "
         f"WHERE TIMESTAMP >= {query_start_bound} "
@@ -315,8 +315,8 @@ def extract_data(cur):
                     }
             }
         results.append(row)
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts         
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts         
 
 
     # Heart rates are spread across tables, depending on the sampling types
@@ -348,8 +348,8 @@ def extract_data(cur):
                         }
                 }
             results.append(row)
-            if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-                devices_observed[f"dev-{r[1]['identifier']}"] = row_ts
+            if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+                devices_observed[f"dev-{r[1]}"] = row_ts
         
     # Get values from the activity table
     #
@@ -387,8 +387,8 @@ def extract_data(cur):
                     }
             }
         results.append(row)
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts        
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts        
 
     # Get normal steps and HR measurements
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, RAW_INTENSITY, STEPS, RAW_KIND, HEART_RATE"
@@ -417,8 +417,8 @@ def extract_data(cur):
             }
 
         results.append(row)     
-        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
-            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts           
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts           
 
 
 

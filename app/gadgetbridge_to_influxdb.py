@@ -115,7 +115,7 @@ def extract_data(cur):
     query_start_bound_ms = query_start_bound * 1000
 
     # Pull out device names
-    device_query = "select _id, NAME from DEVICE"
+    device_query = "select _id, NAME, IDENTIFIER, ALIAS from DEVICE"
     try:
         res = cur.execute(device_query)
     except sqlite3.OperationalError as e: 
@@ -124,7 +124,12 @@ def extract_data(cur):
         return False
     
     for r in res.fetchall():
-        devices[f"dev-{r[0]}"] = r[1]
+        devices[f"dev-{r[0]}"] = {
+            "name" : r[1],
+            "identifier" : r[2],
+            "alias" : r[3] if len(r[3]) > 0 else "Unset"
+        }
+        
 
     # Get SpO2 info
     spo2_data_query = ("SELECT TIMESTAMP, DEVICE_ID, TYPE_NUM, SPO2 FROM HUAMI_SPO2_SAMPLE "
@@ -141,12 +146,14 @@ def extract_data(cur):
                     },
                 "tags" : {
                     "type_num" : r[2],
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias']
                     }
             }
         results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts
     
     stress_data_query = ("SELECT TIMESTAMP, DEVICE_ID, TYPE_NUM, STRESS, "
         # Get the next timestamp, so we can chart how long the watch believed that 
@@ -166,7 +173,9 @@ def extract_data(cur):
                     },
                 "tags" : {
                     "type_num" : r[2],
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias']
                     }
             }
         
@@ -181,8 +190,8 @@ def extract_data(cur):
             row['fields']['stress_exc_sleep'] = r[3]
         
         results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts        
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts        
     
         # Iterate between timestamp and next_ts, creating points to note the stress level
         # convert from ms to s
@@ -213,7 +222,9 @@ def extract_data(cur):
                             },
                         "tags" : {
                             "type_num" : r[2],
-                            "device" : devices[f"dev-{r[1]}"],
+                            "device" : devices[f"dev-{r[1]}"]['name'],
+                            "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                            "alias" : devices[f"dev-{r[1]}"]['alias'],
                             "stress" : "point_in_time"
                             }
                     }  
@@ -243,12 +254,14 @@ def extract_data(cur):
                     "sleep_respiratory_rate" : r[2]
                     },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias']
                     }
             }
         results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts                
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts                
 
 
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, PAI_LOW, PAI_MODERATE, PAI_HIGH, TIME_LOW," 
@@ -273,12 +286,14 @@ def extract_data(cur):
                     "pai_total" : r[9]
                     },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias']
                     }
             }
         results.append(row)    
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts              
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts              
 
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL, BATTERY_INDEX FROM BATTERY_LEVEL "
         f"WHERE TIMESTAMP >= {query_start_bound} "
@@ -293,13 +308,15 @@ def extract_data(cur):
                     "battery_level" : r[2]
                     },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"],
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias'],
                     "battery" : r[3]
                     }
             }
         results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts         
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts         
 
 
     # Heart rates are spread across tables, depending on the sampling types
@@ -324,13 +341,15 @@ def extract_data(cur):
                         "heart_rate" : r[2]
                         },
                     "tags" : {
-                        "device" : devices[f"dev-{r[1]}"],
+                        "device" : devices[f"dev-{r[1]}"]['name'],
+                        "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                        "alias" : devices[f"dev-{r[1]}"]['alias'],
                         "sample_type" : rate_type
                         }
                 }
             results.append(row)
-            if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-                devices_observed[f"dev-{r[1]}"] = row_ts
+            if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+                devices_observed[f"dev-{r[1]['identifier']}"] = row_ts
         
     # Get values from the activity table
     #
@@ -360,14 +379,16 @@ def extract_data(cur):
                     "rem_sleep" : r[8],
                     },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"],
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias'],
                     "activity_kind" : r[4],
                     "sample_type" : "activity"
                     }
             }
         results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts        
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts        
 
     # Get normal steps and HR measurements
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, RAW_INTENSITY, STEPS, RAW_KIND, HEART_RATE"
@@ -388,14 +409,16 @@ def extract_data(cur):
                     "heart_rate" : r[5]
                     },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"],
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias'],
                     "sample_type" : "periodic_samples"
                     }
             }
 
         results.append(row)     
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts           
+        if f"dev-{r[1]['identifier']}" not in devices_observed or devices_observed[f"dev-{r[1]['identifier']}"] < row_ts:
+            devices_observed[f"dev-{r[1]['identifier']}"] = row_ts           
 
 
 
@@ -414,7 +437,9 @@ def extract_data(cur):
                     "last_seen_age" : row_age
                     },
                 "tags" : {
-                    "device" : devices[device],
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias'],
                     "sample_type" : "sync_check"
                     }
             }
@@ -466,7 +491,9 @@ def get_sleep_data(cur, devices):
                     f"{sleep_type}_sleep" : 1
                     },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"],
+                    "device" : devices[f"dev-{r[1]}"]['name'],
+                    "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                    "alias" : devices[f"dev-{r[1]}"]['alias'],
                     "sample_type" : "sleep",
                     "sleep" : "state-change"
                     }
@@ -489,7 +516,9 @@ def get_sleep_data(cur, devices):
                             "sleep_stage" : sleep_type
                             },
                         "tags" : {
-                            "device" : devices[f"dev-{r[1]}"],
+                            "device" : devices[f"dev-{r[1]}"]['name'],
+                            "identifier" : devices[f"dev-{r[1]}"]['identifier'],
+                            "alias" : devices[f"dev-{r[1]}"]['alias'],
                             "sample_type" : "sleep",
                             "sleep" : "point-in-time"
                             }

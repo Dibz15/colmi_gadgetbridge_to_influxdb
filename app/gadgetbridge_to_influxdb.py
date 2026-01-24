@@ -152,7 +152,7 @@ def extract_data(cur):
                     }
             }
         results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"{r[1]}"] < row_ts:
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
     
     stress_data_query = ("SELECT TIMESTAMP, DEVICE_ID, TYPE_NUM, STRESS, "

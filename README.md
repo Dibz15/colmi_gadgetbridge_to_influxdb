@@ -90,7 +90,7 @@ docker run -d --name colmi-parser \
   -e INFLUXDB_ORG=home \
   -e INFLUXDB_BUCKET=health \
   -e SYNC_INTERVAL_SECONDS=1800 \
-  yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest
+  dibz15/colmi2influx:latest
 ```
 
 Or as part of the full `docker-compose.yml` stack (InfluxDB + Grafana +
@@ -103,7 +103,7 @@ docker run --rm \
   -e SYNC_INTERVAL_SECONDS=0 \
   -e WEBDAV_URL=... \
   ... \
-  yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest
+  dibz15/colmi2influx:latest
 ```
 
 ### Running directly (no container)
@@ -132,7 +132,7 @@ every push to `main` (and on `v*.*.*` tags). To use it:
 To build locally instead:
 
 ```bash
-docker build -t colmi-gadgetbridge-to-influxdb .
+docker build -t dibz15/colmi2influx:latest .
 ```
 
 ---

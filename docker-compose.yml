@@ -14,6 +14,13 @@ version: "3.9"
 # Set `image:` on the parser service below to your own Docker Hub
 # username/repo once you've pushed it.
 #
+# All secrets/config below have inline defaults but are meant to be
+# overridden via a .env file sitting next to this docker-compose.yml -
+# Compose reads .env automatically, no extra flag needed. See
+# env.stack.example in this same output for the variables to set there;
+# copy it to .env and fill in real values before first boot. Anything not
+# set in .env falls back to the (placeholder) default baked into this file.
+#
 # After first `docker compose up -d`:
 #   1. Set the INFLUXDB_TOKEN and INFLUXDB_INIT_ADMIN_TOKEN to the SAME
 #      value in both the influxdb and parser service env blocks below
@@ -59,11 +66,11 @@ services:
       # After first boot, manage users/tokens via the InfluxDB UI instead
       # of editing these.
       DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: admin
-      DOCKER_INFLUXDB_INIT_PASSWORD: changeme_admin_password
-      DOCKER_INFLUXDB_INIT_ORG: home
-      DOCKER_INFLUXDB_INIT_BUCKET: health
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: changeme_admin_token
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_INIT_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_INIT_PASSWORD:-changeme_admin_password}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-home}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-health}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
     volumes:
       - /DATA/AppData/biomarker-stack/influxdb/data:/var/lib/influxdb2
       - /DATA/AppData/biomarker-stack/influxdb/config:/etc/influxdb2
@@ -96,8 +103,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: changeme_grafana_password
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme_grafana_password}
       # Lets Grafana auto-provision the InfluxDB datasource on boot instead
       # of clicking through the UI - optional, remove if you'd rather do it
       # manually
@@ -133,9 +140,9 @@ services:
     command:
       - serve
     environment:
-      TZ: "Europe/London"
+      TZ: ${TZ:-Europe/London}
       NTFY_BASE_URL: "http://localhost:8090"
-      # Keep this reachable only over Tailscale rather than opening it to
+      # Keep this reachable only over LAN/VPN rather than opening it to
       # the wider internet - ntfy has no auth by default on the topic you
       # publish/subscribe to
       NTFY_LISTEN_HTTP: ":80"
@@ -168,35 +175,37 @@ services:
             en_us: "ntfy auth database (since NTFY_AUTH_DEFAULT_ACCESS is deny-all)"
 
   parser:
-    image: yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest
+    image: ${PARSER_IMAGE:-dibz15/colmi2influx:latest}
     container_name: biomarker-parser
     restart: unless-stopped
     environment:
       # --- WebDAV (Nextcloud) source ---
-      WEBDAV_URL: "https://your-nextcloud-domain/remote.php/dav/"
-      WEBDAV_PATH: "files/your_nextcloud_user/GadgetBridge/"
-      WEBDAV_USER: "your_nextcloud_user"
-      WEBDAV_PASS: "your_nextcloud_app_password"
-      EXPORT_FILENAME: "Gadgetbridge"
+      WEBDAV_URL: ${WEBDAV_URL:-https://your-nextcloud-domain/remote.php/dav/}
+      WEBDAV_PATH: ${WEBDAV_PATH:-files/your_nextcloud_user/GadgetBridge/}
+      WEBDAV_USER: ${WEBDAV_USER:-your_nextcloud_user}
+      WEBDAV_PASS: ${WEBDAV_PASS:-your_nextcloud_app_password}
+      EXPORT_FILENAME: ${EXPORT_FILENAME:-Gadgetbridge}
 
       # --- Query window ---
-      QUERY_DURATION: "86400"
+      QUERY_DURATION: ${QUERY_DURATION:-86400}
 
-      # --- InfluxDB target - same network, so use the service name ---
+      # --- InfluxDB target - same network, so use the service name.
+      # Reuses the same INFLUXDB_ORG/BUCKET/TOKEN vars as the influxdb
+      # service above, so they only need setting once in .env ---
       INFLUXDB_URL: "http://influxdb:8086"
-      INFLUXDB_TOKEN: "changeme_admin_token"
-      INFLUXDB_ORG: "home"
-      INFLUXDB_BUCKET: "health"
-      INFLUXDB_MEASUREMENT: "colmi"
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-home}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-health}
+      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
 
       # --- Behaviour ---
-      SLEEP_HOURS: "0,1,2,3,4,5,6"
-      COLMI_TIMESTAMPS_ARE_MS: "N"
-      REMOVE_TEMP_DB: "Y"
+      SLEEP_HOURS: ${SLEEP_HOURS:-0,1,2,3,4,5,6}
+      COLMI_TIMESTAMPS_ARE_MS: ${COLMI_TIMESTAMPS_ARE_MS:-N}
+      REMOVE_TEMP_DB: ${REMOVE_TEMP_DB:-Y}
 
       # How often the loop re-runs (seconds). 1800 = every 30 min, plenty
       # given Gadgetbridge itself only auto-exports periodically.
-      SYNC_INTERVAL_SECONDS: "1800"
+      SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-1800}
     networks:
       - biomarker-net
     depends_on:

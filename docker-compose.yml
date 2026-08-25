@@ -1,0 +1,227 @@
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Biomarker stack: InfluxDB (storage) + Grafana (dashboards) + ntfy (alerts)
+#
+# Includes the Colmi parser as a fourth service, pulled as a prebuilt image
+# from Docker Hub (built via GitHub Actions from
+# colmi_gadgetbridge_to_influxdb - see .github/workflows/docker-publish.yml
+# in that repo). It loops on SYNC_INTERVAL_SECONDS, pulling the Gadgetbridge
+# export from Nextcloud WebDAV and writing points into InfluxDB - no
+# external cron needed, and no local build context required for this
+# compose file, so it works fine pasted directly into CasaOS.
+#
+# Set `image:` on the parser service below to your own Docker Hub
+# username/repo once you've pushed it.
+#
+# After first `docker compose up -d`:
+#   1. Set the INFLUXDB_TOKEN and INFLUXDB_INIT_ADMIN_TOKEN to the SAME
+#      value in both the influxdb and parser service env blocks below
+#      (or generate one via the InfluxDB UI and copy it into parser's env)
+#   2. Fill in the parser service's WEBDAV_* values for your Nextcloud
+#   3. Open Grafana at http://<host>:3000 (default login admin/admin,
+#      you'll be forced to change it)
+#   4. Add InfluxDB as a data source (URL: http://influxdb:8086, use the
+#      token/org/bucket you set below)
+#   5. Open ntfy at http://<host>:8090, subscribe to your chosen topic
+#      from the ntfy Android/iOS app or web UI
+# ---------------------------------------------------------------------------
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: grafana
+  category: "Health"
+  index: "/"
+  port_map: "3000"
+  scheme: "http"
+  title:
+    en_us: "Biomarker Stack"
+  description:
+    en_us: "Self-hosted InfluxDB + Grafana + ntfy stack for wearable biomarker data (HRV, HR, temperature, stress) synced from Gadgetbridge."
+  tagline:
+    en_us: "Own your biomarker data, self-hosted"
+  icon: "https://grafana.com/static/img/menu/grafana2.svg"
+  developer: "self"
+  author: "self"
+
+services:
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: biomarker-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      # First-run setup - only takes effect on an empty data volume.
+      # After first boot, manage users/tokens via the InfluxDB UI instead
+      # of editing these.
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: changeme_admin_password
+      DOCKER_INFLUXDB_INIT_ORG: home
+      DOCKER_INFLUXDB_INIT_BUCKET: health
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: changeme_admin_token
+    volumes:
+      - /DATA/AppData/biomarker-stack/influxdb/data:/var/lib/influxdb2
+      - /DATA/AppData/biomarker-stack/influxdb/config:/etc/influxdb2
+    networks:
+      - biomarker-net
+    x-casaos:
+      envs:
+        - container: DOCKER_INFLUXDB_INIT_PASSWORD
+          description:
+            en_us: "InfluxDB admin password - change before first boot"
+        - container: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+          description:
+            en_us: "InfluxDB API token - used by Grafana and the parser script"
+      ports:
+        - container: "8086"
+          description:
+            en_us: "InfluxDB HTTP API / UI"
+      volumes:
+        - container: /var/lib/influxdb2
+          description:
+            en_us: "InfluxDB time-series data"
+        - container: /etc/influxdb2
+          description:
+            en_us: "InfluxDB config"
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: biomarker-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: changeme_grafana_password
+      # Lets Grafana auto-provision the InfluxDB datasource on boot instead
+      # of clicking through the UI - optional, remove if you'd rather do it
+      # manually
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - /DATA/AppData/biomarker-stack/grafana/data:/var/lib/grafana
+      - /DATA/AppData/biomarker-stack/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - biomarker-net
+    depends_on:
+      - influxdb
+    x-casaos:
+      envs:
+        - container: GF_SECURITY_ADMIN_PASSWORD
+          description:
+            en_us: "Grafana admin password - change before first boot"
+      ports:
+        - container: "3000"
+          description:
+            en_us: "Grafana web UI"
+      volumes:
+        - container: /var/lib/grafana
+          description:
+            en_us: "Grafana dashboards, users, settings"
+        - container: /etc/grafana/provisioning
+          description:
+            en_us: "Grafana datasource/dashboard provisioning files"
+
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: biomarker-ntfy
+    restart: unless-stopped
+    command:
+      - serve
+    environment:
+      TZ: "Europe/London"
+      NTFY_BASE_URL: "http://localhost:8090"
+      # Keep this reachable only over Tailscale rather than opening it to
+      # the wider internet - ntfy has no auth by default on the topic you
+      # publish/subscribe to
+      NTFY_LISTEN_HTTP: ":80"
+      NTFY_CACHE_FILE: "/var/cache/ntfy/cache.db"
+      NTFY_AUTH_FILE: "/var/lib/ntfy/auth.db"
+      NTFY_AUTH_DEFAULT_ACCESS: "deny-all"
+      NTFY_ENABLE_SIGNUP: "false"
+    ports:
+      - "8090:80"
+    volumes:
+      - /DATA/AppData/biomarker-stack/ntfy/cache:/var/cache/ntfy
+      - /DATA/AppData/biomarker-stack/ntfy/lib:/var/lib/ntfy
+    networks:
+      - biomarker-net
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_us: "Timezone for notification timestamps"
+      ports:
+        - container: "80"
+          description:
+            en_us: "ntfy web UI / publish-subscribe API"
+      volumes:
+        - container: /var/cache/ntfy
+          description:
+            en_us: "ntfy message cache"
+        - container: /var/lib/ntfy
+          description:
+            en_us: "ntfy auth database (since NTFY_AUTH_DEFAULT_ACCESS is deny-all)"
+
+  parser:
+    image: yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest
+    container_name: biomarker-parser
+    restart: unless-stopped
+    environment:
+      # --- WebDAV (Nextcloud) source ---
+      WEBDAV_URL: "https://your-nextcloud-domain/remote.php/dav/"
+      WEBDAV_PATH: "files/your_nextcloud_user/GadgetBridge/"
+      WEBDAV_USER: "your_nextcloud_user"
+      WEBDAV_PASS: "your_nextcloud_app_password"
+      EXPORT_FILENAME: "Gadgetbridge"
+
+      # --- Query window ---
+      QUERY_DURATION: "86400"
+
+      # --- InfluxDB target - same network, so use the service name ---
+      INFLUXDB_URL: "http://influxdb:8086"
+      INFLUXDB_TOKEN: "changeme_admin_token"
+      INFLUXDB_ORG: "home"
+      INFLUXDB_BUCKET: "health"
+      INFLUXDB_MEASUREMENT: "colmi"
+
+      # --- Behaviour ---
+      SLEEP_HOURS: "0,1,2,3,4,5,6"
+      COLMI_TIMESTAMPS_ARE_MS: "N"
+      REMOVE_TEMP_DB: "Y"
+
+      # How often the loop re-runs (seconds). 1800 = every 30 min, plenty
+      # given Gadgetbridge itself only auto-exports periodically.
+      SYNC_INTERVAL_SECONDS: "1800"
+    networks:
+      - biomarker-net
+    depends_on:
+      - influxdb
+    x-casaos:
+      envs:
+        - container: WEBDAV_URL
+          description:
+            en_us: "Nextcloud WebDAV base URL"
+        - container: WEBDAV_PATH
+          description:
+            en_us: "Path to the Gadgetbridge export folder on Nextcloud"
+        - container: WEBDAV_USER
+          description:
+            en_us: "Nextcloud username"
+        - container: WEBDAV_PASS
+          description:
+            en_us: "Nextcloud app password (create a dedicated app password, not your main login)"
+        - container: INFLUXDB_TOKEN
+          description:
+            en_us: "Must match the InfluxDB admin token set on the influxdb service"
+        - container: SYNC_INTERVAL_SECONDS
+          description:
+            en_us: "How often to re-check the Nextcloud export, in seconds"
+
+networks:
+  biomarker-net:
+    driver: bridge

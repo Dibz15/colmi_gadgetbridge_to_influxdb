@@ -81,6 +81,19 @@ SLEEP_HOURS = os.getenv("SLEEP_HOURS", "0,1,2,3,4,5,6").split(",")
 # db will be retained
 REMOVE_TEMP_DB = os.getenv("REMOVE_TEMP_DB", "Y")
 
+# Which human this data belongs to. Written as a tag on every point.
+# Not used for anything else today (single-user setup, one parser
+# instance) - this is a deliberate stop-over so that if this ever
+# becomes a multi-user setup (e.g. a second ring/person added, or a
+# second parser instance pointed at a different WebDAV export), each
+# person's data is already disambiguated in InfluxDB by an explicit
+# `user` tag rather than only by device serial - which is brittle
+# (breaks if hardware is swapped/upgraded) and not self-documenting
+# in dashboard/alert queries. Retrofitting this later would mean
+# rewriting historical points' tags, which Influx doesn't support
+# in-place - so it's cheap to add now, awkward to add after the fact.
+GADGETBRIDGE_USER = os.getenv("GADGETBRIDGE_USER", "primary")
+
 # COLMI_* tables store TIMESTAMP as unix seconds (matching the
 # generic AbstractActivitySample-derived tables in upstream
 # Gadgetbridge, e.g. MI_BAND_ACTIVITY_SAMPLE), NOT milliseconds
@@ -408,12 +421,6 @@ def extract_data(cur):
         section_counts["activity"] = len(rows)
 
     # --- Sleep sessions + stages ---
-    # NOTE: get_sleep_data() isn't shown in the snippet you pasted, so it's
-    # left as-is here. Apply the same pattern to it if it isn't already
-    # resilient: wrap its own COLMI_SLEEP_SESSION_SAMPLE / COLMI_SLEEP_STAGE_SAMPLE
-    # queries in try/except sqlite3.OperationalError (or route them through
-    # _run_query above), and log a warning rather than letting a missing/
-    # malformed sleep table take down the whole extraction.
     sleep_rows = get_sleep_data(cur, device_tags, query_start_bound_scaled)
     results += sleep_rows
     section_counts["sleep"] = len(sleep_rows)
@@ -516,11 +523,20 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
 def write_results(results):
     ''' Open a connection to InfluxDB and write the results in
     '''
+    logger.debug(f"Writing {len(results)} point(s) tagged user={GADGETBRIDGE_USER!r}")
     with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as _client:  # noqa: SIM117
         with _client.write_api() as _write_client:
             # Iterate through the results generating and writing points
             for row in results:
                 p = Point(INFLUXDB_MEASUREMENT)
+
+                # Applied here, once, rather than threaded through every
+                # section above - guarantees every point gets a `user` tag
+                # with no risk of a section being missed. See the
+                # GADGETBRIDGE_USER comment in the config section for why
+                # this exists even in a single-user setup.
+                p = p.tag("user", GADGETBRIDGE_USER)
+
                 for tag in row['tags']:
                     p = p.tag(tag, row['tags'][tag])
 

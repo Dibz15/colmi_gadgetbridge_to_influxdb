@@ -72,8 +72,8 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-health}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
     volumes:
-      - /DATA/AppData/biomarker-stack/influxdb/data:/var/lib/influxdb2
-      - /DATA/AppData/biomarker-stack/influxdb/config:/etc/influxdb2
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/influxdb/data:/var/lib/influxdb2
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/influxdb/config:/etc/influxdb2
     networks:
       - biomarker-net
     x-casaos:
@@ -110,8 +110,8 @@ services:
       # manually
       GF_INSTALL_PLUGINS: ""
     volumes:
-      - /DATA/AppData/biomarker-stack/grafana/data:/var/lib/grafana
-      - /DATA/AppData/biomarker-stack/grafana/provisioning:/etc/grafana/provisioning
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/grafana/data:/var/lib/grafana
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/grafana/provisioning:/etc/grafana/provisioning
     networks:
       - biomarker-net
     depends_on:
@@ -142,7 +142,7 @@ services:
     environment:
       TZ: ${TZ:-Europe/London}
       NTFY_BASE_URL: "http://localhost:8090"
-      # Keep this reachable only over LAN/VPN rather than opening it to
+      # Keep this reachable only over Tailscale rather than opening it to
       # the wider internet - ntfy has no auth by default on the topic you
       # publish/subscribe to
       NTFY_LISTEN_HTTP: ":80"
@@ -153,8 +153,8 @@ services:
     ports:
       - "8090:80"
     volumes:
-      - /DATA/AppData/biomarker-stack/ntfy/cache:/var/cache/ntfy
-      - /DATA/AppData/biomarker-stack/ntfy/lib:/var/lib/ntfy
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/ntfy/cache:/var/cache/ntfy
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/ntfy/lib:/var/lib/ntfy
     networks:
       - biomarker-net
     x-casaos:
@@ -177,7 +177,7 @@ services:
   parser:
     image: ${PARSER_IMAGE:-dibz15/colmi2influx:latest}
     container_name: biomarker-parser
-    restart: unless-stopped
+    restart: on-failure:3
     environment:
       # --- WebDAV (Nextcloud) source ---
       WEBDAV_URL: ${WEBDAV_URL:-https://your-nextcloud-domain/remote.php/dav/}

@@ -13,7 +13,7 @@
 FROM python:slim-bullseye
 
 RUN pip install --upgrade pip \
-    && pip install webdavclient3 influxdb-client
+    && pip install webdavclient3 influxdb-client loguru
 
 COPY app /app
 COPY entrypoint.sh /entrypoint.sh

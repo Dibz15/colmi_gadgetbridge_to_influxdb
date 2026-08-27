@@ -1,23 +1,22 @@
-version: "3.9"
-
 # ---------------------------------------------------------------------------
 # Biomarker stack: InfluxDB (storage) + Grafana (dashboards) + ntfy (alerts)
 #
-# Includes the Colmi parser as a fourth service, pulled as a prebuilt image
-# from Docker Hub (built via GitHub Actions from
-# colmi_gadgetbridge_to_influxdb - see .github/workflows/docker-publish.yml
-# in that repo). It loops on SYNC_INTERVAL_SECONDS, pulling the Gadgetbridge
-# export from Nextcloud WebDAV and writing points into InfluxDB - no
-# external cron needed, and no local build context required for this
-# compose file, so it works fine pasted directly into CasaOS.
+# Includes the Colmi parser and wearable-events as prebuilt images pulled
+# from Docker Hub - both built via one monorepo GitHub Actions workflow
+# at .github/workflows/docker-publish.yml (path-filtered, so pushing a
+# change to one service doesn't rebuild the other). The parser loops on
+# SYNC_INTERVAL_SECONDS, pulling the Gadgetbridge export from Nextcloud
+# WebDAV and writing points into InfluxDB - no external cron needed, and
+# no local build context required for this compose file, so it works
+# fine pasted directly into CasaOS.
 #
-# Set `image:` on the parser service below to your own Docker Hub
-# username/repo once you've pushed it.
+# Set `image:` on the parser and wearable-events services below to your
+# own Docker Hub username/repo once you've pushed them.
 #
 # All secrets/config below have inline defaults but are meant to be
 # overridden via a .env file sitting next to this docker-compose.yml -
 # Compose reads .env automatically, no extra flag needed. See
-# env.stack.example in this same output for the variables to set there;
+# .env.example in this same output for the variables to set there;
 # copy it to .env and fill in real values before first boot. Anything not
 # set in .env falls back to the (placeholder) default baked into this file.
 #
@@ -233,8 +232,7 @@ services:
             en_us: "How often to re-check the Nextcloud export, in seconds"
 
   wearable-events:
-    build:
-      context: ./wearable-events
+    image: ${WEARABLE_EVENTS_IMAGE:-dibz15/wearable-events-ui:latest}
     container_name: biomarker-wearable-events
     restart: unless-stopped
     environment:

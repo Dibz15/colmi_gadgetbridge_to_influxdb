@@ -1,64 +1,178 @@
-# Biomarker stack
+# Gadgetbridge to InfluxDB (Colmi fork)
 
-Self-hosted pipeline: Colmi ring → Gadgetbridge → Nextcloud (WebDAV) →
-InfluxDB → Grafana, plus a calendar-tagging/subjective-sleep companion
-service (`wearable-events`) with its own login.
+Fetches a [Gadgetbridge](https://www.gadgetbridge.org/) database export from
+a WebDAV server (e.g. Nextcloud) and writes biomarker data into
+[InfluxDB](https://github.com/influxdata/influxdb) for dashboarding/alerting
+in Grafana.
 
-## Structure
+This repo is a fork [bentasker/gadgetbridge_to_influxdb](https://github.com/bentasker/gadgetbridge_to_influxdb).
+The original targets Huami/Amazfit devices; this fork adapted the
+queries for **Colmi/Yawell smart rings** (R02/R03/R06/R09/R10/R11/R12
+family). This fork adds:
+
+- A loop wrapper (`entrypoint.sh`) so the container runs as a persistent
+  service on an interval, instead of one-shot-and-exit — suited to running
+  in a long-lived `docker-compose` stack rather than being triggered by an
+  external cron.
+- This directory lives inside a monorepo alongside `wearable-events/` -
+  see the top-level `README.md` for the CI setup, which builds and pushes
+  both images from one workflow at `.github/workflows/docker-publish.yml`.
+
+---
+
+## How it fits together
 
 ```
-.
-├── docker-compose.yml              InfluxDB + Grafana + ntfy + parser + wearable-events
-├── .env.example                    copy to .env, fill in real values
-├── colmi_gadgetbridge_to_influxdb/ fork this onto github.com/Dibz15/colmi_gadgetbridge_to_influxdb
-│   ├── app/gadgetbridge_to_influxdb.py   the actual parser script
-│   ├── Dockerfile                  loop wrapper + loguru added on top of upstream
-│   ├── entrypoint.sh
-│   ├── .github/workflows/          builds + pushes to Docker Hub on push to main
-│   └── README.md                   full details on this component
-└── wearable-events/                calendar tagging + subjective sleep score, built locally by compose
-    ├── app/                        FastAPI backend (auth, calendars, keyword rules, reprocessing)
-    ├── static/                     the web UI (login, tags, sleep, calendars, manage tabs)
-    └── schema.sql
+Colmi ring (BLE)
+   │
+   ▼
+Gadgetbridge (Android, periodic auto-export)
+   │  WebDAV
+   ▼
+Nextcloud
+   │  WebDAV (pulled by this container, on a loop)
+   ▼
+InfluxDB  ──▶  Grafana (dashboards, alert rules)
+                  │
+                  ▼
+                ntfy (push notifications)
 ```
 
-## Setup order
+---
 
-1. **Push the parser image.** Fork `Dibz15/colmi_gadgetbridge_to_influxdb`
-   on GitHub, replace `Dockerfile`/`entrypoint.sh` with the ones in
-   `colmi_gadgetbridge_to_influxdb/` here, push `app/gadgetbridge_to_influxdb.py`
-   too. Add `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` as repo secrets, push to
-   `main` - the Action builds and pushes `yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest`.
-   Full details in `colmi_gadgetbridge_to_influxdb/README.md`.
+## Gadgetbridge configuration
 
-2. **Fill in `.env`.** Copy `.env.example` → `.env` next to
-   `docker-compose.yml`. At minimum set: `PARSER_IMAGE` (from step 1),
-   `INFLUXDB_TOKEN`/`INFLUXDB_INIT_ADMIN_TOKEN` (same value, your choice),
-   the `WEBDAV_*` vars (Nextcloud app password, not your login password),
-   and `WEARABLE_EVENTS_ADMIN_USERNAME`/`PASSWORD` for your first login.
+Gadgetbridge needs to be set to periodically auto-export its database to a
+WebDAV target. In Gadgetbridge: **Settings → Data auto-export → WebDAV**,
+pointed at your Nextcloud instance's WebDAV endpoint
+(`https://<nextcloud-domain>/remote.php/dav/`), into a dedicated folder
+(e.g. `GadgetBridge/`). See the [Gadgetbridge wiki](https://codeberg.org/Freeyourgadget/Gadgetbridge/wiki/Data-Export-Import-Merging-Processing)
+for the general auto-export mechanics.
 
-3. **`docker compose up -d --build`** — builds `wearable-events` locally,
-   pulls everything else.
+Each export is a **full overwrite** of the database file, not an
+incremental diff — this container re-reads the whole file each run and
+relies on InfluxDB's identical-timestamp-and-tags dedup to avoid
+duplicating points, so re-processing the same file repeatedly is harmless.
 
-4. **Configure Gadgetbridge** on your phone to auto-export to the
-   Nextcloud WebDAV path matching `WEBDAV_PATH` in `.env`.
+---
 
-5. **Grafana**: open `:3000`, add InfluxDB as a data source
-   (`http://influxdb:8086`, org/bucket/token from `.env`), build dashboards.
+## Configuration (environment variables)
 
-6. **wearable-events**: open `:8081`, log in with the bootstrap account
-   from step 2. Add calendars and keyword rules from there. If you later
-   add a second household member, use the same username there as that
-   person's `GADGETBRIDGE_USER` so their data correlates - the "Add
-   household member" form will offer to pick from already-synced ring
-   data automatically once it exists, rather than typing it blind.
+| Variable | Description | Default |
+|---|---|---|
+| `WEBDAV_URL` | WebDAV server URL. For Nextcloud: `https://<domain>/remote.php/dav/` | — (required) |
+| `WEBDAV_USER` | WebDAV username | — (required) |
+| `WEBDAV_PASS` | WebDAV password (use a Nextcloud **app password**, not your login password) | — (required) |
+| `WEBDAV_PATH` | Path to the export directory on the WebDAV server, e.g. `files/<nextcloud_user>/GadgetBridge/` | — (required) |
+| `EXPORT_FILENAME` | Filename of the export on the WebDAV server | `gadgetbridge` |
+| `QUERY_DURATION` | How far back (seconds) to query on each run | `86400` |
+| `INFLUXDB_URL` | InfluxDB server URL | — (required) |
+| `INFLUXDB_TOKEN` | InfluxDB API token (or `user:pass` on 1.x) | — (required) |
+| `INFLUXDB_ORG` | InfluxDB org name/ID | — (required) |
+| `INFLUXDB_BUCKET` | InfluxDB bucket to write into | — (required) |
+| `INFLUXDB_MEASUREMENT` | InfluxDB measurement name | `gadgetbridge` |
+| `SLEEP_HOURS` | Comma-separated hours (0–23) treated as sleeping hours, for stress-field averaging | `0,1,2,3,4,5,6` |
+| `SYNC_INTERVAL_SECONDS` | **New in this fork.** Seconds between sync runs. Set to `0` to run once and exit (original upstream behaviour, for driving from an external cron instead) | `1800` |
 
-## Notes
+> Field/table names above match upstream's documented set. Since Gadgetbridge's
+> Colmi tables (`COLMI_HEART_RATE_SAMPLE`, `COLMI_HRV_VALUE_SAMPLE`,
+> `COLMI_HRV_SUMMARY_SAMPLE`, `COLMI_SPO2_SAMPLE`, `COLMI_STRESS_SAMPLE`,
+> `COLMI_TEMPERATURE_SAMPLE`, `COLMI_SLEEP_SESSION_SAMPLE`,
+> `COLMI_SLEEP_STAGE_SAMPLE`, `COLMI_ACTIVITY_SAMPLE`) differ from the
+> Huami ones this env-var list was originally written against, double check
+> the actual query logic in `app/gadgetbridge_to_influxdb.py` in this repo
+> against your own exported `.db` schema (`sqlite3 gadgetbridge.sqlite
+> .schema`) if any expected metric is missing from InfluxDB after a sync —
+> table/column names can drift slightly between Gadgetbridge versions.
 
-- `GADGETBRIDGE_USER` (parser) and the wearable-events login username
-  must match for one person's calendar/sleep-score data and their
-  HR/HRV/temperature data to share the same `user` tag in InfluxDB.
-- Two things flagged as unverified against real hardware until you have
-  a few days of data: timestamp units (`COLMI_TIMESTAMPS_ARE_MS`) and the
-  sleep-stage integer mapping (`SLEEP_STAGE_MAP` in the parser script) -
-  see the comments at each definition.
+---
+
+## Running
+
+### Via Docker Hub image (recommended)
+
+```bash
+docker run -d --name colmi-parser \
+  -e WEBDAV_URL=https://nextcloud.example.invalid/remote.php/dav/ \
+  -e WEBDAV_USER=youruser \
+  -e WEBDAV_PASS=yourapppassword \
+  -e WEBDAV_PATH=files/youruser/GadgetBridge/ \
+  -e INFLUXDB_URL=http://influxdb:8086 \
+  -e INFLUXDB_TOKEN=yourtoken \
+  -e INFLUXDB_ORG=home \
+  -e INFLUXDB_BUCKET=health \
+  -e SYNC_INTERVAL_SECONDS=1800 \
+  yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest
+```
+
+Or as part of the full `docker-compose.yml` stack (InfluxDB + Grafana +
+ntfy + this parser) — see that file for the complete setup.
+
+### Running once, from an external cron
+
+```bash
+docker run --rm \
+  -e SYNC_INTERVAL_SECONDS=0 \
+  -e WEBDAV_URL=... \
+  ... \
+  yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest
+```
+
+### Running directly (no container)
+
+```bash
+pip install webdavclient3 influxdb-client
+# export the env vars above
+./app/gadgetbridge_to_influxdb.py
+```
+
+---
+
+## Building and publishing your own image
+
+This directory is one of two images built by the monorepo workflow at
+`.github/workflows/docker-publish.yml` (repo root) — it builds and
+pushes automatically on every push to `main` that touches this
+directory (and on `v*.*.*` tags). To use it:
+
+1. Create a Docker Hub repository, e.g. `colmi-gadgetbridge-to-influxdb`.
+2. Generate a Docker Hub access token (Account Settings → Security).
+3. In the repo's GitHub Settings → Secrets and variables → Actions, add:
+   - `DOCKERHUB_USERNAME`
+   - `DOCKERHUB_TOKEN`
+4. Push to `main` — the workflow detects the change under
+   `colmi_gadgetbridge_to_influxdb/`, builds `linux/amd64` and
+   `linux/arm64` images, and pushes `:latest`, `:<git-sha>`, and (on
+   tags) `:<semver>`. Pushing a `wearable-events`-only change does not
+   trigger a rebuild of this image, and vice versa.
+
+To build locally instead:
+
+```bash
+docker build -t colmi-gadgetbridge-to-influxdb .
+```
+
+---
+
+## Verifying your data
+
+Two things worth checking once you have a few days of real data flowing,
+since they weren't confirmed against Gadgetbridge's source at the time of
+this fork:
+
+1. **Timestamp units** — if dates in Grafana look wrong (1970, or far in
+   the future), the `COLMI_*` tables may use millisecond rather than
+   second timestamps in your Gadgetbridge version; adjust the timestamp
+   handling in `app/gadgetbridge_to_influxdb.py` accordingly.
+2. **Sleep stage codes** — `COLMI_SLEEP_STAGE_SAMPLE.STAGE` integer values
+   aren't documented publicly; cross-check a night you remember clearly
+   against what lands in InfluxDB to confirm which integer maps to
+   light/deep/REM/awake.
+
+---
+
+## License
+
+Copyright (c) 2023 B Tasker (original), with modifications by Dibz15 (Colmi
+table adaptation) and this fork (loop wrapper, CI). Released under the
+[BSD 3-Clause License](https://www.bentasker.co.uk/pages/licenses/bsd-3-clause.html).

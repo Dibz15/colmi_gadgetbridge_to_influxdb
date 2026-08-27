@@ -7,10 +7,10 @@ service (`wearable-events`) with its own login.
 ## Structure
 
 ```
-colmi_gadgetbridge_to_influxdb
+.
 ├── docker-compose.yml              InfluxDB + Grafana + ntfy + parser + wearable-events
 ├── .env.example                    copy to .env, fill in real values
-├── parser/ 
+├── colmi_gadgetbridge_to_influxdb/ fork this onto github.com/Dibz15/colmi_gadgetbridge_to_influxdb
 │   ├── app/gadgetbridge_to_influxdb.py   the actual parser script
 │   ├── Dockerfile                  loop wrapper + loguru added on top of upstream
 │   ├── entrypoint.sh
@@ -23,6 +23,22 @@ colmi_gadgetbridge_to_influxdb
 ```
 
 ## Setup order
+
+1. **Push the parser image.** Fork `Dibz15/colmi_gadgetbridge_to_influxdb`
+   on GitHub, replace `Dockerfile`/`entrypoint.sh` with the ones in
+   `colmi_gadgetbridge_to_influxdb/` here, push `app/gadgetbridge_to_influxdb.py`
+   too. Add `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` as repo secrets, push to
+   `main` - the Action builds and pushes `yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest`.
+   Full details in `colmi_gadgetbridge_to_influxdb/README.md`.
+
+2. **Fill in `.env`.** Copy `.env.example` → `.env` next to
+   `docker-compose.yml`. At minimum set: `PARSER_IMAGE` (from step 1),
+   `INFLUXDB_TOKEN`/`INFLUXDB_INIT_ADMIN_TOKEN` (same value, your choice),
+   the `WEBDAV_*` vars (Nextcloud app password, not your login password),
+   and `WEARABLE_EVENTS_ADMIN_USERNAME`/`PASSWORD` for your first login.
+
+3. **`docker compose up -d --build`** — builds `wearable-events` locally,
+   pulls everything else.
 
 4. **Configure Gadgetbridge** on your phone to auto-export to the
    Nextcloud WebDAV path matching `WEBDAV_PATH` in `.env`.

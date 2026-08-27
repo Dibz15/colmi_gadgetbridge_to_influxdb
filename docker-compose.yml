@@ -177,7 +177,7 @@ services:
   parser:
     image: ${PARSER_IMAGE:-dibz15/colmi2influx:latest}
     container_name: biomarker-parser
-    restart: on-failure:3
+    restart: unless-stopped
     environment:
       # --- WebDAV (Nextcloud) source ---
       WEBDAV_URL: ${WEBDAV_URL:-https://your-nextcloud-domain/remote.php/dav/}
@@ -231,6 +231,54 @@ services:
         - container: SYNC_INTERVAL_SECONDS
           description:
             en_us: "How often to re-check the Nextcloud export, in seconds"
+
+  wearable-events:
+    build:
+      context: ./wearable-events
+    container_name: biomarker-wearable-events
+    restart: unless-stopped
+    environment:
+      SQLITE_PATH: /data/config.db
+      INFLUX_URL: "http://influxdb:8086"
+      INFLUX_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+      INFLUX_ORG: ${INFLUXDB_ORG:-home}
+      INFLUX_BUCKET: ${INFLUXDB_BUCKET:-health}
+      EVENTS_MEASUREMENT: ${EVENTS_MEASUREMENT:-events}
+      SLEEP_MEASUREMENT: ${SLEEP_MEASUREMENT:-subjective_sleep}
+      SENSOR_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
+      SYNC_INTERVAL_MINUTES: ${CALENDAR_SYNC_INTERVAL_MINUTES:-15}
+      MIN_SLEEP_SESSION_SECONDS: ${MIN_SLEEP_SESSION_SECONDS:-10800}
+      PORT: "8080"
+      # First-run bootstrap only - creates one login if the users table
+      # is empty. After that, add further household members from the
+      # Manage tab (no public signup page). Use the same username as
+      # that person's GADGETBRIDGE_USER value on their ring parser
+      # instance so their data correlates later.
+      ADMIN_USERNAME: ${WEARABLE_EVENTS_ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${WEARABLE_EVENTS_ADMIN_PASSWORD:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-N}
+      SESSION_MAX_AGE_DAYS: ${SESSION_MAX_AGE_DAYS:-30}
+    volumes:
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/wearable-events:/data
+    ports:
+      - "8081:8080"
+    networks:
+      - biomarker-net
+    depends_on:
+      - influxdb
+    x-casaos:
+      envs:
+        - container: SYNC_INTERVAL_MINUTES
+          description:
+            en_us: "How often to poll ICS calendar feeds, in minutes"
+      ports:
+        - container: "8080"
+          description:
+            en_us: "Wearable Events web UI (tagging, sleep score, calendar management)"
+      volumes:
+        - container: /data
+          description:
+            en_us: "SQLite config db (calendars, keyword rules, tag definitions)"
 
 networks:
   biomarker-net:

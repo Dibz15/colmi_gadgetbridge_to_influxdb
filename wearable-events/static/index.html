@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Wearable Events</title>
+<link rel="stylesheet" href="/style.css">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-box">
+    <h1>Wearable Events</h1>
+    <input type="text" id="login-username" placeholder="Username" autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+    <button id="login-submit">Log in</button>
+    <p id="login-status" class="status"></p>
+  </div>
+</div>
+
+<div id="app-shell" style="display:none">
+
+<header class="app-header">
+  <span id="current-username"></span>
+  <button id="logout-btn" class="small-btn">Log out</button>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="tags">Tags</button>
+  <button class="tab-btn" data-tab="sleep">Sleep</button>
+  <button class="tab-btn" data-tab="calendars">Calendars</button>
+  <button class="tab-btn" data-tab="manage">Manage</button>
+</nav>
+
+<main>
+
+  <section id="tab-tags" class="tab-panel active">
+    <div id="tag-buttons" class="button-grid">
+      <p class="muted">Loading...</p>
+    </div>
+    <div class="custom-tag-row">
+      <input type="text" id="custom-tag-input" placeholder="Custom tag...">
+      <button id="custom-tag-submit">Log</button>
+    </div>
+    <p id="tags-status" class="status"></p>
+  </section>
+
+  <section id="tab-sleep" class="tab-panel">
+    <p class="section-label">How did you sleep?</p>
+    <div class="sleep-scale">
+      <button class="sleep-btn" data-score="1">1</button>
+      <button class="sleep-btn" data-score="2">2</button>
+      <button class="sleep-btn" data-score="3">3</button>
+      <button class="sleep-btn" data-score="4">4</button>
+      <button class="sleep-btn" data-score="5">5</button>
+    </div>
+    <div class="qualifier-chips">
+      <button class="chip" data-qualifier="groggy">Groggy</button>
+      <button class="chip" data-qualifier="woke_up_often">Woke up often</button>
+      <button class="chip" data-qualifier="vivid_dreams">Vivid dreams</button>
+    </div>
+    <button id="sleep-submit" disabled>Submit</button>
+    <p id="sleep-status" class="status"></p>
+  </section>
+
+  <section id="tab-calendars" class="tab-panel">
+    <div id="calendar-list">
+      <p class="muted">Loading...</p>
+    </div>
+    <details class="add-calendar">
+      <summary>Add calendar</summary>
+      <input type="text" id="cal-name" placeholder="Name (e.g. Work)">
+      <input type="text" id="cal-url" placeholder="ICS feed URL">
+      <input type="text" id="cal-default-tag" placeholder="Default tag (e.g. meeting)">
+      <button id="cal-add-submit">Add</button>
+    </details>
+    <p id="cal-status" class="status"></p>
+  </section>
+
+  <section id="tab-manage" class="tab-panel">
+    <p class="section-label">Keyword rules</p>
+    <p class="muted small-note">Changes below are staged locally and only take effect when you hit "Save changes".</p>
+    <div id="rule-list">
+      <p class="muted">Loading...</p>
+    </div>
+    <details class="add-form">
+      <summary>Add rule</summary>
+      <input type="text" id="rule-keyword" placeholder="Keyword (or regex pattern)">
+      <label class="inline-check"><input type="checkbox" id="rule-is-regex"> Treat as regex</label>
+      <select id="rule-match-field">
+        <option value="title">Match against: title</option>
+        <option value="description">Match against: description</option>
+      </select>
+      <select id="rule-category">
+        <option value="context">context</option>
+        <option value="meta">meta</option>
+        <option value="substance">substance</option>
+        <option value="restful">restful</option>
+      </select>
+      <input type="text" id="rule-tag" placeholder="Tag to apply (e.g. meeting)">
+      <input type="number" id="rule-priority" placeholder="Priority (lower = evaluated first)" value="0">
+      <button id="rule-add-draft">Add to draft</button>
+    </details>
+    <button id="rule-save-batch" disabled style="margin-top:1rem;width:100%">Save changes</button>
+    <p id="rule-status" class="status"></p>
+    <div id="reprocess-banner" class="reprocess-banner" style="display:none"></div>
+
+    <p class="section-label" style="margin-top:2rem">Tag buttons</p>
+    <div id="tagdef-list">
+      <p class="muted">Loading...</p>
+    </div>
+    <details class="add-form">
+      <summary>Add tag button</summary>
+      <input type="text" id="tagdef-tag" placeholder="Tag value (e.g. caffeine)">
+      <input type="text" id="tagdef-label" placeholder="Button label (e.g. Caffeine)">
+      <select id="tagdef-category">
+        <option value="context">context</option>
+        <option value="substance">substance</option>
+        <option value="restful">restful</option>
+        <option value="meta">meta</option>
+      </select>
+      <label class="inline-check"><input type="checkbox" id="tagdef-is-duration"> Start/stop duration tag</label>
+      <input type="number" id="tagdef-sort-order" placeholder="Sort order" value="0">
+      <button id="tagdef-add-submit">Add button</button>
+    </details>
+    <p id="tagdef-status" class="status"></p>
+
+    <p class="section-label" style="margin-top:2rem">Household</p>
+    <p class="muted small-note">
+      Add other people in your household. Use the same username here as the
+      GADGETBRIDGE_USER value on their ring parser instance, so their
+      calendar/sleep data lines up with their HR/HRV data later.
+    </p>
+    <div id="user-list">
+      <p class="muted">Loading...</p>
+    </div>
+    <details class="add-form">
+      <summary>Add household member</summary>
+      <p id="claim-hint" class="muted small-note">Loading ring data...</p>
+      <select id="new-user-username-select" style="display:none"></select>
+      <input type="text" id="new-user-username-manual" placeholder="Username (must match their GADGETBRIDGE_USER)">
+      <input type="password" id="new-user-password" placeholder="Password">
+      <button id="new-user-submit">Add</button>
+    </details>
+    <p id="user-status" class="status"></p>
+  </section>
+
+</main>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

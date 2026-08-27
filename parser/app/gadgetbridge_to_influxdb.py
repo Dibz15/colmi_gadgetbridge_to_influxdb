@@ -70,7 +70,7 @@ QUERY_DURATION = int(os.getenv("QUERY_DURATION", "86400"))
 INFLUXDB_URL = os.getenv("INFLUXDB_URL", False)
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "")
 INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "")
-INFLUXDB_MEASUREMENT = os.getenv("INFLUXDB_MEASUREMENT", "wearable")
+INFLUXDB_MEASUREMENT = os.getenv("INFLUXDB_MEASUREMENT", "gadgetbridge")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "testing_db")
 
 # Which hours should be considered sleeping hours?

@@ -202,14 +202,16 @@ Then subscribe to $NTFY_TOPIC (default biomarker-alerts) from the ntfy app on yo
 
 #### Grafana alerting (provisioned)
 
-Unlike the rest of this stack, the alerting pipeline is genuinely wired up already — provisioned from files under grafana/provisioning/, not something you configure by hand:
+Unlike the rest of this stack, the alerting pipeline is genuinely wired up already — provisioned from templates under grafana/provisioning-templates/, not something you configure by hand:
 
-Datasource (datasources/influxdb.yaml) — the InfluxDB connection from step 6, using your .env org/bucket/token.
-Alert rule (alerting/rules.yaml) — "HRV dropped below baseline": compares your last 24h average HRV against your prior 14-day average, and fires if it's dropped more than 20%. This is a worked example, not the only possible rule — the file has comments on how to copy the pattern for resting heart rate or temperature.
-Contact point (alerting/contact-points.yaml) — routes to ntfy using the grafana account above.
-Notification policy (alerting/notification-policies.yaml) — routes all alerts in this Grafana instance to that contact point.
+- Datasource (`datasources/influxdb.yaml.template`) — the InfluxDB connection from step 6, using your .env org/bucket/token.
+- Alert rule (`alerting/rules.yaml.template`) — "HRV dropped below baseline": compares your last 24h average HRV against your prior 14-day average, and fires if it's dropped more than 20%. This is a worked example, not the only possible rule — the file has comments on how to copy the pattern for resting heart rate or temperature.
+- Contact point (`alerting/contact-points.yaml.template`) — routes to ntfy using the grafana account above.
+- Notification policy (`alerting/notification-policies.yaml.template`) — routes all alerts in this Grafana instance to that contact point.
 
-Nothing here has been tested against a live Grafana instance while building this — after your stack is up, check Alerting → Alert rules to confirm the rule loaded, and use the Test button on the ntfy contact point (Alerting → Contact points) to confirm a notification actually arrives before relying on it. Until you have at least ~2 weeks of HRV history synced, expect this rule to sit in "No data" state — that's the intended, non-alerting behaviour, not a bug.
+These are templates, not the final config Grafana reads. A small init container (`grafana-provisioning-init`) renders them with envsubst into a Docker volume before Grafana starts, substituting the .env values in. This exists because Grafana's alert-rule provisioning does not support `$ENV_VAR` interpolation inside the query/settings blocks — this was discovered the hard way (a literal `$INFLUXDB_BUCKET` string reached InfluxDB and failed with "could not find bucket") and is now handled by the render step instead. 
+
+This mechanism has been tested directly (the render script's output was verified to substitute correctly and leave ntfy's own `{{.title}}/{{.message}}` template syntax untouched), but the resulting config has not been tested against a live Grafana instance. After your stack is up, check Alerting → Alert rules to confirm the rule loaded, and use the Test button on the ntfy contact point (Alerting → Contact points) to confirm a notification actually arrives before relying on it. Until you have at least ~2 weeks of HRV history synced, expect this rule to sit in "No data" state — that's the intended, non-alerting behaviour, not a bug.
 
 ### 8. Set up wearable-events (optional)
 

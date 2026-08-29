@@ -5,7 +5,7 @@ a WebDAV server (e.g. Nextcloud) and writes biomarker data into
 [InfluxDB](https://github.com/influxdata/influxdb) for dashboarding/alerting
 in Grafana.
 
-This repo is a fork [bentasker/gadgetbridge_to_influxdb](https://github.com/bentasker/gadgetbridge_to_influxdb).
+This repo is a fork of [bentasker/gadgetbridge_to_influxdb](https://github.com/bentasker/gadgetbridge_to_influxdb).
 The original targets Huami/Amazfit devices; this fork adapted the
 queries for **Colmi/Yawell smart rings** (R02/R03/R06/R09/R10/R11/R12
 family). This fork adds:
@@ -156,17 +156,17 @@ docker build -t colmi-gadgetbridge-to-influxdb .
 
 ## Verifying your data
 
-Two things worth checking once you have a few days of real data flowing,
-since they weren't confirmed against Gadgetbridge's source at the time of
-this fork:
-
-1. **Timestamp units** — if dates in Grafana look wrong (1970, or far in
-   the future), the `COLMI_*` tables may use millisecond rather than
-   second timestamps in your Gadgetbridge version; adjust the timestamp
-   handling in `app/gadgetbridge_to_influxdb.py` accordingly.
+1. **Timestamp units — CONFIRMED.** Real R09 hardware data (Aug 2026)
+   proved `COLMI_*` tables store `TIMESTAMP` in **milliseconds**, not
+   seconds — the opposite of the original guess. `COLMI_TIMESTAMPS_ARE_MS`
+   now defaults to `Y`. Evidence: InfluxDB rejected writes with a 22-digit
+   timestamp ("value out of range"), which is exactly what you get from
+   multiplying an already-millisecond value by `1e9` instead of `1e6`.
+   If your own device/build turns out to differ (dates land implausibly
+   far in the future in Grafana), flip this back to `N`.
 2. **Sleep stage codes** — `COLMI_SLEEP_STAGE_SAMPLE.STAGE` integer values
-   aren't documented publicly; cross-check a night you remember clearly
-   against what lands in InfluxDB to confirm which integer maps to
+   still aren't independently confirmed; cross-check a night you remember
+   clearly against what lands in InfluxDB to confirm which integer maps to
    light/deep/REM/awake.
 
 ---

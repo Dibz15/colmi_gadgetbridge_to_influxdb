@@ -94,13 +94,16 @@ REMOVE_TEMP_DB = os.getenv("REMOVE_TEMP_DB", "Y")
 # in-place - so it's cheap to add now, awkward to add after the fact.
 GADGETBRIDGE_USER = os.getenv("GADGETBRIDGE_USER", "primary")
 
-# COLMI_* tables store TIMESTAMP as unix seconds (matching the
-# generic AbstractActivitySample-derived tables in upstream
-# Gadgetbridge, e.g. MI_BAND_ACTIVITY_SAMPLE), NOT milliseconds
-# like some of the HUAMI_* tables. Verify this against your own
-# export if values look wrong (e.g. dates in the far future) -
-# flip to True if it turns out your build stores ms instead.
-COLMI_TIMESTAMPS_ARE_MS = os.getenv("COLMI_TIMESTAMPS_ARE_MS", "N") == "Y"
+# CONFIRMED via real R09 hardware/Gadgetbridge export (Aug 2026, see
+# repo history): COLMI_* tables store TIMESTAMP in MILLISECONDS, not
+# seconds - the opposite of what was originally assumed by analogy to
+# MI_BAND_ACTIVITY_SAMPLE. The evidence: InfluxDB rejected writes with
+# "value out of range" on 22-digit timestamps, which is exactly what
+# you get from multiplying an already-millisecond value by 1e9 (seconds
+# -> nanos) instead of 1e6 (ms -> nanos). Y is now the verified default;
+# only flip to N if your own export's data lands implausibly far in the
+# future once graphed (a sign your device/build stores seconds instead).
+COLMI_TIMESTAMPS_ARE_MS = os.getenv("COLMI_TIMESTAMPS_ARE_MS", "Y") == "Y"
 
 # Best-effort mapping of COLMI_SLEEP_STAGE_SAMPLE.STAGE values.
 # This has NOT been verified against Gadgetbridge source and may

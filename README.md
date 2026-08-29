@@ -136,6 +136,8 @@ cd colmi_gadgetbridge_to_influxdb
 cp .env.example .env
 ```
 
+> Before generating any secrets: Compose applies its own `${VAR}` interpolation syntax to .env's own values, not just to docker-compose.yml. A raw `$` inside a generated password gets misread as the start of a variable reference and silently truncates everything after it — no error, it just quietly produces a shorter, wrong value. Generating secrets with openssl rand -hex N (as used throughout this guide) sidesteps this entirely, since hex output can never contain $. See the comment at the top of .env.example for the full explanation.
+
 Edit `.env` and fill in, at minimum:
 
 - `PARSER_IMAGE` / `WEARABLE_EVENTS_IMAGE` — set these to wherever the

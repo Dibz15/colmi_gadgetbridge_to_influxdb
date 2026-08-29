@@ -14,7 +14,12 @@ async function api(path, options = {}) {
     ...options,
   });
   const data = await resp.json().catch(() => ({}));
-  if (resp.status === 401) {
+  // /auth/login's own 401 means "wrong credentials", not "your session
+  // expired" - you're never in a session yet at that point, so treating
+  // it the same way masks the real reason (e.g. "invalid username or
+  // password") behind a misleading message. Let it fall through to the
+  // generic error handling below instead.
+  if (resp.status === 401 && path !== "/auth/login") {
     // Session expired or was revoked mid-use - drop back to the login
     // screen rather than leaving the UI in a broken half-authenticated
     // state. showLogin is defined later in this file but hoisted since

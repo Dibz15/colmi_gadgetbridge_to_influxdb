@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import bcrypt
 from fastapi import HTTPException, Request
+from loguru import logger
 
 from app import db
 from app.config import DEFAULT_TAG_DEFINITIONS
@@ -72,8 +73,16 @@ def bootstrap_admin_if_configured(admin_username: str | None, admin_password: st
     Tailscale by household members) - after this first account exists,
     logged-in users can add further accounts from the UI.
     '''
-    if db.count_users() > 0:
+    existing = db.count_users()
+    if existing > 0:
+        logger.info(f"Skipping bootstrap - {existing} user(s) already exist")
         return
     if not admin_username or not admin_password:
+        logger.warning(
+            "No users exist and ADMIN_USERNAME/ADMIN_PASSWORD are not both set - "
+            "no account was created. Login will fail until one exists; set both "
+            "env vars and restart, or create a user directly in the SQLite database."
+        )
         return
     create_user(admin_username, admin_password)
+    logger.info(f"Bootstrapped initial user: {admin_username!r}")

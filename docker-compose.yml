@@ -1,3 +1,5 @@
+version: "3.9"
+
 # ---------------------------------------------------------------------------
 # Biomarker stack: InfluxDB (storage) + Grafana (dashboards) + ntfy (alerts)
 #
@@ -104,17 +106,45 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme_grafana_password}
-      # Lets Grafana auto-provision the InfluxDB datasource on boot instead
-      # of clicking through the UI - optional, remove if you'd rather do it
-      # manually
       GF_INSTALL_PLUGINS: ""
+      # Alerting is enabled by default in modern Grafana - no extra flag
+      # needed for the provisioned datasource/contact point/rule below
+      # to take effect.
+
+      # --- Consumed by grafana/provisioning/datasources/influxdb.yaml ---
+      INFLUX_URL: "http://influxdb:8086"
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-home}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-health}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+
+      # --- Consumed by grafana/provisioning/alerting/rules.yaml ---
+      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
+      # Which person's HRV this alert rule watches - matches the
+      # GADGETBRIDGE_USER value on their ring parser instance. This
+      # rule is single-user by design (see rules.yaml comments); a
+      # second household member would need their own copy of the rule
+      # block with a different ALERT_HRV_USER value.
+      ALERT_HRV_USER: ${ALERT_HRV_USER:-primary}
+
+      # --- Consumed by grafana/provisioning/alerting/contact-points.yaml ---
+      # Must match a topic/user you've granted write access to via
+      # `ntfy access` (see the ntfy setup step in the README) - Grafana
+      # authenticates to ntfy with HTTP Basic Auth using these creds.
+      NTFY_TOPIC: ${NTFY_TOPIC:-biomarker-alerts}
+      NTFY_USER: ${NTFY_GRAFANA_USER:-grafana}
+      NTFY_PASSWORD: ${NTFY_GRAFANA_PASSWORD:-changeme_ntfy_password}
+      # ntfy priority scale: 1=min, 3=default, 5=urgent (bypasses phone
+      # silent/DND on most clients) - 4 (high) is a reasonable default
+      # for a "worth looking at today" biomarker alert.
+      NTFY_PRIORITY: ${NTFY_PRIORITY:-4}
     volumes:
       - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/grafana/data:/var/lib/grafana
-      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - biomarker-net
     depends_on:
       - influxdb
+      - ntfy
     x-casaos:
       envs:
         - container: GF_SECURITY_ADMIN_PASSWORD
@@ -130,7 +160,7 @@ services:
             en_us: "Grafana dashboards, users, settings"
         - container: /etc/grafana/provisioning
           description:
-            en_us: "Grafana datasource/dashboard provisioning files"
+            en_us: "Grafana datasource/alerting provisioning files (repo-tracked, read-only)"
 
   ntfy:
     image: binwiederhier/ntfy:latest
@@ -174,7 +204,7 @@ services:
             en_us: "ntfy auth database (since NTFY_AUTH_DEFAULT_ACCESS is deny-all)"
 
   parser:
-    image: ${PARSER_IMAGE:-dibz15/colmi2influx:latest}
+    image: ${PARSER_IMAGE:-yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest}
     container_name: biomarker-parser
     restart: unless-stopped
     environment:
@@ -232,7 +262,7 @@ services:
             en_us: "How often to re-check the Nextcloud export, in seconds"
 
   wearable-events:
-    image: ${WEARABLE_EVENTS_IMAGE:-dibz15/wearable-events-ui:latest}
+    image: ${WEARABLE_EVENTS_IMAGE:-yourdockerhubuser/wearable-events:latest}
     container_name: biomarker-wearable-events
     restart: unless-stopped
     environment:

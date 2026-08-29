@@ -1,0 +1,91 @@
+apiVersion: 1
+
+# NOTE: written against Grafana's documented file-provisioning schema for
+# unified alerting, not live-tested against a running Grafana instance in
+# this environment. After first boot, check Alerting -> Alert rules to
+# confirm this loaded correctly, and use "Preview" on the rule to sanity
+# check the Flux queries return data once your ring has a few days of
+# history synced. Before that, expect this rule to sit in "No data"
+# state, which is the intended (non-alerting) behaviour, not a bug.
+#
+# This is deliberately just ONE rule (HRV drop vs baseline) as a worked
+# template - copy this block and adjust the Flux queries/thresholds to
+# add similar rules for resting heart rate rise or nighttime temperature
+# spike, following the same A/B/C/D (recent, baseline, math, threshold)
+# pattern.
+
+groups:
+  - orgId: 1
+    name: biomarker-alerts
+    folder: Biomarker Alerts
+    interval: 1h
+    rules:
+      - uid: hrv-baseline-drop
+        title: HRV dropped below baseline
+        condition: D
+        for: 30m
+        noDataState: NoData
+        execErrState: Error
+        annotations:
+          summary: >-
+            Recent 24h average HRV is more than 20% below your 14-day
+            baseline. This can be an early stress/burnout signal - worth
+            checking in on sleep, workload, and how you're actually
+            feeling.
+        labels:
+          severity: warning
+          source: biomarker-stack
+        data:
+          # A: mean HRV over the last 24h
+          - refId: A
+            datasourceUid: influxdb-main
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: A
+              query: |
+                from(bucket: "$INFLUXDB_BUCKET")
+                  |> range(start: -1d)
+                  |> filter(fn: (r) => r._measurement == "$INFLUXDB_MEASUREMENT")
+                  |> filter(fn: (r) => r._field == "hrv")
+                  |> filter(fn: (r) => r.user == "$ALERT_HRV_USER")
+                  |> mean()
+
+          # B: mean HRV over the 14 days before that (excludes the last
+          # 24h so the baseline isn't self-diluted by the thing it's
+          # being compared against)
+          - refId: B
+            datasourceUid: influxdb-main
+            relativeTimeRange:
+              from: 1296000
+              to: 86400
+            model:
+              refId: B
+              query: |
+                from(bucket: "$INFLUXDB_BUCKET")
+                  |> range(start: -15d, stop: -1d)
+                  |> filter(fn: (r) => r._measurement == "$INFLUXDB_MEASUREMENT")
+                  |> filter(fn: (r) => r._field == "hrv")
+                  |> filter(fn: (r) => r.user == "$ALERT_HRV_USER")
+                  |> mean()
+
+          # C: percent deviation of A from B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: math
+              expression: "($A - $B) / $B * 100"
+
+          # D: fires when C is more than 20% below baseline (i.e. < -20)
+          - refId: D
+            datasourceUid: __expr__
+            model:
+              refId: D
+              type: threshold
+              expression: C
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [-20]

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+# Routes every alert in this Grafana instance to ntfy by default. Fine
+# for a single-purpose instance dedicated to this stack - if you later
+# add unrelated alert rules you don't want going to the same phone
+# topic, replace this with matcher-based routes instead of a blanket
+# default receiver.
+policies:
+  - orgId: 1
+    receiver: ntfy
+    group_by: ["alertname"]

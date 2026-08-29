@@ -82,6 +82,9 @@ Two custom images are built from this repo (see
 │   ├── app/gadgetbridge_to_influxdb.py    reads Gadgetbridge's exported DB, writes to InfluxDB
 │   ├── Dockerfile
 │   └── entrypoint.sh
+├── grafana/provisioning/           Grafana datasource + alerting config-as-code (see step 7)
+│   ├── datasources/influxdb.yaml
+│   └── alerting/                   rules.yaml, contact-points.yaml, notification-policies.yaml
 └── wearable-events/                calendar tagging + subjective sleep score, has its own web UI
     ├── app/                        FastAPI backend (login, calendars, keyword rules, reprocessing)
     ├── static/                     the web UI itself
@@ -178,7 +181,35 @@ temperature, and sleep stages are all written by the parser (see the
 [parser README](./parser/README.md) for the full
 field list).
 
-### 7. Set up wearable-events (optional)
+### 7. Set up ntfy (for alerting)
+
+ntfy is included in the stack for push notifications, but ships with auth locked down (NTFY_AUTH_DEFAULT_ACCESS: deny-all, signup disabled) rather than open by default. You need two ntfy accounts before alerting works end to end:
+
+```bash
+# Your own account, to subscribe and receive notifications
+docker exec -it biomarker-ntfy ntfy user add youruser
+docker exec -it biomarker-ntfy ntfy access youruser "$NTFY_TOPIC" read
+
+# A dedicated account for Grafana to publish as (matches
+# NTFY_GRAFANA_USER / NTFY_GRAFANA_PASSWORD in your .env)
+docker exec -it biomarker-ntfy ntfy user add grafana
+docker exec -it biomarker-ntfy ntfy access grafana "$NTFY_TOPIC" write
+```
+
+Then subscribe to $NTFY_TOPIC (default biomarker-alerts) from the ntfy app on your phone, pointed at http://<your-host>:8090.
+
+#### Grafana alerting (provisioned)
+
+Unlike the rest of this stack, the alerting pipeline is genuinely wired up already — provisioned from files under grafana/provisioning/, not something you configure by hand:
+
+Datasource (datasources/influxdb.yaml) — the InfluxDB connection from step 6, using your .env org/bucket/token.
+Alert rule (alerting/rules.yaml) — "HRV dropped below baseline": compares your last 24h average HRV against your prior 14-day average, and fires if it's dropped more than 20%. This is a worked example, not the only possible rule — the file has comments on how to copy the pattern for resting heart rate or temperature.
+Contact point (alerting/contact-points.yaml) — routes to ntfy using the grafana account above.
+Notification policy (alerting/notification-policies.yaml) — routes all alerts in this Grafana instance to that contact point.
+
+Nothing here has been tested against a live Grafana instance while building this — after your stack is up, check Alerting → Alert rules to confirm the rule loaded, and use the Test button on the ntfy contact point (Alerting → Contact points) to confirm a notification actually arrives before relying on it. Until you have at least ~2 weeks of HRV history synced, expect this rule to sit in "No data" state — that's the intended, non-alerting behaviour, not a bug.
+
+### 8. Set up wearable-events (optional)
 
 Open `http://<your-host>:8081` and log in with the account from step 3. From there you can add calendar feeds (ICS URLs), keyword rules that tag calendar events, manual one-tap context tags (caffeine, alcohol, etc.), and a nightly subjective sleep score. Adding a second household member is available from the Manage tab — use the same username there as that person's GADGETBRIDGE_USER (see below) so their data lines up.
 
@@ -212,6 +243,8 @@ risking a typo'd manual entry.
   by what's been cached locally since that event was last synced — it
   can't resurrect classification for events that rolled off your
   calendar's ICS feed window before ever being seen by this stack.
+- **Grafana alerting provisioning is unverified against a live instance**. The YAML files under grafana/provisioning/alerting/ were written against Grafana's documented schema but couldn't be tested against a running Grafana in the environment they were built in. Verify the rule loaded (Alerting → Alert rules) and the contact point actually delivers (Alerting → Contact points → Test) before relying on it — see step 7.
+- **The HRV alert rule is single-user**. It watches one ALERT_HRV_USER value; a household with multiple people needs a copy of the rule block in rules.yaml per person, each with a different uid and user filter.
 
 ## License
 

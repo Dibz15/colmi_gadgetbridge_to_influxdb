@@ -1,0 +1,30 @@
+apiVersion: 1
+
+# Grafana's webhook contact point can't customize its outgoing JSON body
+# shape (confirmed in Grafana's own docs - only `title` and `message` are
+# templatable, everything else is a fixed schema). Rather than standing
+# up a middleware relay container just to reshape that JSON for ntfy,
+# this uses ntfy's own `?template=yes` mode: ntfy accepts Grafana's raw
+# JSON body and pulls `title`/`message` out of it itself, using Go
+# template expressions passed as URL query parameters.
+#
+# Curly braces in the query string are percent-encoded (%7B%7B / %7D%7D
+# for {{ / }}) since raw braces aren't valid in a URL query string.
+#
+# NOTE: this provisioning file was written against Grafana's documented
+# webhook contact point schema but has not been exercised against a
+# live Grafana instance in this environment. After first boot, check
+# Alerting -> Contact points -> ntfy -> Test to confirm a notification
+# actually arrives before relying on it.
+
+contactPoints:
+  - orgId: 1
+    name: ntfy
+    receivers:
+      - uid: ntfy-webhook
+        type: webhook
+        settings:
+          url: "http://ntfy:8090/$NTFY_TOPIC?template=yes&title=%7B%7B.title%7D%7D&message=%7B%7B.message%7D%7D&priority=$NTFY_PRIORITY&tags=biomarker%2Cgrafana"
+          httpMethod: POST
+          username: $NTFY_USER
+          password: $NTFY_PASSWORD

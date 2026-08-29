@@ -418,6 +418,68 @@ main {
   border: 1px solid var(--surface-active);
 }
 
+.timeline-edit-btn {
+  margin-left: auto;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+.timeline-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.timeline-edit-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.editable-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chip-remove {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.timeline-edit-add-tag {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.timeline-edit-add-tag input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-active);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.timeline-edit-datetime {
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-active);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.timeline-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .small-note {
   font-size: 0.85rem;
   margin-top: -0.5rem;

@@ -1,6 +1,6 @@
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -38,6 +38,95 @@ def calendar_event_id(calendar: str, start_time: str, title: str) -> str:
 
 def manual_event_id() -> str:
     return str(uuid.uuid4())
+
+
+def delete_event_tag_point(*, tag: str, source: str, timestamp: datetime, calendar: str | None = None):
+    ''' Delete the single Influx point for one (event, tag) pairing.
+
+    event_id is stored as a FIELD, not a tag, on events points - and
+    InfluxDB's delete API predicates can only match on tags/measurement,
+    not field values. So we can't delete "everything with this event_id"
+    directly. Instead this relies on tag + source (+ calendar, for
+    calendar-derived events) + the event's exact timestamp being unique
+    in practice for a personal calendar/tap log - a narrow (1 second)
+    time window keeps this safe from touching neighbouring points.
+    Known edge case: two events sharing the same tag/source/calendar
+    starting at the exact same second would collide here; for personal
+    use this is vanishingly unlikely and not worth the complexity of
+    handling. Doesn't filter on `user` (the rest of the predicate scopes
+    tightly enough in practice, and `user` isn't guaranteed stable if an
+    account were ever renamed - a real but narrow edge case).
+
+    Shared by the reprocess job (reclassifying calendar events under new
+    keyword rules) and the manual event/calendar-tag-override edit
+    endpoints in main.py - same underlying constraint, same fix.
+    '''
+    client = get_client()
+    delete_api = client.delete_api()
+    start = timestamp
+    stop = timestamp + timedelta(seconds=1)
+    # Key names are quoted (not just values) - InfluxDB's delete predicate
+    # parser treats certain bare words as reserved (confirmed: "tag" broke
+    # parsing with "bad logical expression, at position 26", landing
+    # exactly on the "t" of "tag=" - the same class of bug documented for
+    # "from=" in InfluxDB's own issue tracker/forums). Quoting the key
+    # itself, not just the value, is the documented fix. Quoting "source"
+    # and "calendar" defensively too, since there's no published
+    # authoritative list of every reserved word in this specific grammar.
+    predicate = f'_measurement="{EVENTS_MEASUREMENT}" AND "tag"="{tag}" AND "source"="{source}"'
+    if calendar is not None:
+        predicate += f' AND "calendar"="{calendar}"'
+    delete_api.delete(start, stop, predicate, bucket=INFLUX_BUCKET, org=INFLUX_ORG)
+
+
+def find_manual_event_by_id(user: str, event_id: str, lookback_days: int = 1825) -> dict | None:
+    ''' Look up a single manual event's current timestamp and tag set by
+    event_id, for the edit/delete endpoints. Unlike delete, event_id
+    CAN be filtered on directly in a normal query (it's the InfluxDB
+    delete API specifically that's restricted to tags) - so this reuses
+    the same pivot-then-group approach as find_manual_events_in_range,
+    just filtered to one event_id instead of a time range.
+
+    lookback_days defaults to ~5 years since a lookup-by-id has no
+    natural "recent" bound the way a timeline view does - the person
+    could be editing an old manual tap.
+    '''
+    client = get_client()
+    query_api = client.query_api()
+
+    flux = f'''
+    from(bucket: "{INFLUX_BUCKET}")
+      |> range(start: -{lookback_days}d)
+      |> filter(fn: (r) => r._measurement == "{EVENTS_MEASUREMENT}")
+      |> filter(fn: (r) => r.user == "{user}")
+      |> filter(fn: (r) => r.source == "manual")
+      |> pivot(rowKey: ["_time", "tag"], columnKey: ["_field"], valueColumn: "_value")
+      |> filter(fn: (r) => r.event_id == "{event_id}")
+    '''
+
+    try:
+        tables = query_api.query(flux)
+    except Exception as e:
+        logger.error(f"Failed to look up manual event {event_id} for user={user}: {e}")
+        return None
+
+    tags = set()
+    timestamp = None
+    duration_min = None
+    for table in tables:
+        for record in table.records:
+            tag_value = record.values.get("tag")
+            if tag_value:
+                tags.add(tag_value)
+            timestamp = record.get_time()
+            dm = record.values.get("duration_min")
+            if dm is not None:
+                duration_min = dm
+
+    if timestamp is None:
+        return None
+
+    return {"timestamp": timestamp, "tags": sorted(tags), "duration_min": duration_min}
 
 
 def write_event_points(*, user: str, tags: list[str], source: str, timestamp: datetime,

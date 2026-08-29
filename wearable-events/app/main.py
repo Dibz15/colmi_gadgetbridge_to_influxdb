@@ -19,9 +19,11 @@ from app.config import (
     SESSION_MAX_AGE_DAYS,
     SYNC_INTERVAL_MINUTES,
 )
-from app.ics_sync import sync_all_calendars
+from app.ics_sync import classify_event, sync_all_calendars
 from app.influx import (
+    delete_event_tag_point,
     find_last_completed_sleep_session,
+    find_manual_event_by_id,
     find_manual_events_in_range,
     list_distinct_sensor_users,
     manual_event_id,
@@ -75,6 +77,18 @@ async def no_cache_static(request: Request, call_next):
 class ManualEventIn(BaseModel):
     tags: list[str]
     duration_min: int | None = None
+
+
+class ManualEventUpdateIn(BaseModel):
+    ''' Partial update - only fields actually provided are changed.
+    tags, if given, is a full replacement set (not a diff).
+    '''
+    tags: list[str] | None = None
+    timestamp: str | None = None  # ISO 8601
+
+
+class CalendarEventTagsIn(BaseModel):
+    tags: list[str]  # full replacement set
 
 
 class SleepIn(BaseModel):
@@ -228,6 +242,78 @@ def post_event(payload: ManualEventIn, current_user: dict = Depends(get_current_
     return {"event_id": event_id, "tags": payload.tags}
 
 
+@app.patch("/events/{event_id}")
+def patch_event(event_id: str, payload: ManualEventUpdateIn, current_user: dict = Depends(get_current_user)):
+    ''' Edit a manual event's tags and/or timestamp. At least one of the
+    two must be provided. Unset fields keep their current value.
+    '''
+    if payload.tags is None and payload.timestamp is None:
+        raise HTTPException(400, "provide at least one of: tags, timestamp")
+
+    username = current_user["username"]
+    existing = find_manual_event_by_id(username, event_id)
+    if existing is None:
+        raise HTTPException(404, "manual event not found")
+
+    old_tags = set(existing["tags"])
+    old_timestamp = existing["timestamp"]
+
+    new_tags = set(payload.tags) if payload.tags is not None else old_tags
+    if payload.timestamp is not None:
+        try:
+            new_timestamp = datetime.fromisoformat(payload.timestamp)
+            if new_timestamp.tzinfo is None:
+                new_timestamp = new_timestamp.replace(tzinfo=timezone.utc)
+        except ValueError as e:
+            raise HTTPException(400, f"invalid timestamp: {e}") from e
+    else:
+        new_timestamp = old_timestamp
+
+    if not new_tags:
+        raise HTTPException(400, "at least one tag is required")
+
+    timestamp_changed = new_timestamp != old_timestamp
+
+    # If the timestamp is moving, every old point (all old tags) needs
+    # deleting from the old timestamp - a partial tag diff doesn't make
+    # sense once the point in time itself has changed. If the timestamp
+    # is unchanged, only delete the tags actually being removed.
+    tags_to_delete = old_tags if timestamp_changed else (old_tags - new_tags)
+    for tag in tags_to_delete:
+        try:
+            delete_event_tag_point(tag=tag, source="manual", timestamp=old_timestamp)
+        except Exception as e:
+            logger.warning(f"Failed to delete stale point for manual event {event_id} (tag={tag}): {e}")
+
+    write_event_points(
+        user=username,
+        tags=sorted(new_tags),
+        source="manual",
+        timestamp=new_timestamp,
+        event_id=event_id,
+        duration_min=existing["duration_min"],
+    )
+
+    return {"event_id": event_id, "tags": sorted(new_tags), "timestamp": new_timestamp.isoformat()}
+
+
+@app.delete("/events/{event_id}")
+def delete_event(event_id: str, current_user: dict = Depends(get_current_user)):
+    ''' Delete a manual event entirely (all its tags). '''
+    username = current_user["username"]
+    existing = find_manual_event_by_id(username, event_id)
+    if existing is None:
+        raise HTTPException(404, "manual event not found")
+
+    for tag in existing["tags"]:
+        try:
+            delete_event_tag_point(tag=tag, source="manual", timestamp=existing["timestamp"])
+        except Exception as e:
+            logger.warning(f"Failed to delete point for manual event {event_id} (tag={tag}): {e}")
+
+    return {"ok": True}
+
+
 # --- timeline (read-only merged view) ---
 
 @app.get("/timeline")
@@ -262,10 +348,12 @@ def get_timeline(start: str | None = None, end: str | None = None, current_user:
             continue
         entries.append({
             "kind": "calendar",
+            "event_id": ev["event_id"],
             "timestamp": ev["start_iso"],
             "title": ev["title"],
             "calendar": calendar_names.get(ev["calendar_id"], "(deleted calendar)"),
             "tags": json.loads(ev["applied_tags"] or "[]"),
+            "manually_tagged": bool(ev["manually_tagged"]),
             "duration_min": ev["duration_min"],
         })
 
@@ -273,6 +361,7 @@ def get_timeline(start: str | None = None, end: str | None = None, current_user:
     for ev in find_manual_events_in_range(current_user["username"], start_dt, end_dt):
         entries.append({
             "kind": "manual",
+            "event_id": ev["event_id"],
             "timestamp": ev["timestamp"],
             "title": None,
             "calendar": None,
@@ -358,6 +447,97 @@ def trigger_calendar_sync(calendar_id: int, current_user: dict = Depends(get_cur
     rules = db.list_keyword_rules(current_user["id"], enabled_only=True)
     sync_calendar(calendar, rules, current_user["username"])
     return {"ok": True}
+
+
+@app.patch("/calendar_events/{event_id}/tags")
+def patch_calendar_event_tags(event_id: str, payload: CalendarEventTagsIn, current_user: dict = Depends(get_current_user)):
+    ''' Manually override a calendar-derived event's tags (add/edit/
+    remove), independent of keyword-rule classification. Marks the
+    event manually_tagged=1, so future scheduled syncs and reprocess
+    runs leave it alone from now on - see the schema.sql comment on
+    that column for why this is necessary (without it, the very next
+    15-minute sync would silently revert the edit back to whatever the
+    ruleset says).
+    '''
+    if not payload.tags:
+        raise HTTPException(400, "at least one tag is required")
+
+    user_id = current_user["id"]
+    cached = db.get_cached_event(event_id, user_id)
+    if cached is None:
+        raise HTTPException(404, "calendar event not found")
+
+    calendar = db.get_calendar(cached["calendar_id"], user_id)
+    if calendar is None:
+        raise HTTPException(409, "this event's calendar no longer exists")
+
+    old_tags = set(json.loads(cached["applied_tags"] or "[]"))
+    new_tags = set(payload.tags)
+    start_dt = datetime.fromisoformat(cached["start_iso"])
+
+    removed = old_tags - new_tags
+    for tag in removed:
+        try:
+            delete_event_tag_point(tag=tag, source="calendar", timestamp=start_dt, calendar=calendar["name"])
+        except Exception as e:
+            logger.warning(f"Failed to delete stale point for calendar event {event_id} (tag={tag}): {e}")
+
+    write_event_points(
+        user=current_user["username"],
+        tags=sorted(new_tags),
+        source="calendar",
+        timestamp=start_dt,
+        event_id=event_id,
+        calendar=calendar["name"],
+        duration_min=cached["duration_min"],
+    )
+    db.set_cached_event_tags(event_id, sorted(new_tags), manually_tagged=True)
+
+    return {"event_id": event_id, "tags": sorted(new_tags)}
+
+
+@app.post("/calendar_events/{event_id}/reset_tags")
+def reset_calendar_event_tags(event_id: str, current_user: dict = Depends(get_current_user)):
+    ''' Undoes a manual tag override: re-runs keyword classification
+    against the *current* ruleset (not whatever was cached before the
+    override), writes the result, and clears manually_tagged so future
+    syncs/reprocess apply normally to this event again.
+    '''
+    user_id = current_user["id"]
+    cached = db.get_cached_event(event_id, user_id)
+    if cached is None:
+        raise HTTPException(404, "calendar event not found")
+    if not cached["manually_tagged"]:
+        raise HTTPException(400, "this event isn't manually tagged - nothing to reset")
+
+    calendar = db.get_calendar(cached["calendar_id"], user_id)
+    if calendar is None:
+        raise HTTPException(409, "this event's calendar no longer exists")
+
+    rules = db.list_keyword_rules(user_id, enabled_only=True)
+    new_tags = classify_event(cached["title"], cached["description"], rules, calendar["default_tag"])
+    old_tags = set(json.loads(cached["applied_tags"] or "[]"))
+    start_dt = datetime.fromisoformat(cached["start_iso"])
+
+    removed = old_tags - set(new_tags)
+    for tag in removed:
+        try:
+            delete_event_tag_point(tag=tag, source="calendar", timestamp=start_dt, calendar=calendar["name"])
+        except Exception as e:
+            logger.warning(f"Failed to delete stale point while resetting calendar event {event_id} (tag={tag}): {e}")
+
+    write_event_points(
+        user=current_user["username"],
+        tags=new_tags,
+        source="calendar",
+        timestamp=start_dt,
+        event_id=event_id,
+        calendar=calendar["name"],
+        duration_min=cached["duration_min"],
+    )
+    db.set_cached_event_tags(event_id, new_tags, manually_tagged=False)
+
+    return {"event_id": event_id, "tags": new_tags}
 
 
 # --- keyword rules ---

@@ -1,13 +1,12 @@
 import json
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from loguru import logger
 
 from app import db
-from app.config import INFLUX_BUCKET, INFLUX_ORG
 from app.ics_sync import classify_event
-from app.influx import get_client, write_event_points
+from app.influx import delete_event_tag_point, write_event_points
 
 _lock = threading.Lock()
 
@@ -39,10 +38,16 @@ def compute_reclassification_diff(user_id: int, old_rules: list[dict], new_rules
     under old_rules vs new_rules. This is what powers the "N events
     would change" figure shown before a reprocess is actually kicked
     off, so the person is confirming a real number, not a guess.
+
+    Manually-tagged events are excluded - reprocessing skips them (see
+    _run_reprocess), so including them in this count would overstate how
+    many events will actually change.
     '''
     cached = db.list_cached_events(user_id)
     affected_titles = []
     for ev in cached:
+        if ev["manually_tagged"]:
+            continue
         calendar = db.get_calendar(ev["calendar_id"])
         if calendar is None:
             # Calendar was deleted since this event was cached - nothing
@@ -54,31 +59,6 @@ def compute_reclassification_diff(user_id: int, old_rules: list[dict], new_rules
             affected_titles.append(ev["title"] or "(untitled event)")
 
     return {"count": len(affected_titles), "sample_titles": affected_titles[:5]}
-
-
-def _delete_event_tag_point(*, tag: str, calendar: str, timestamp: datetime):
-    ''' Delete the single Influx point for one (event, tag) pairing.
-
-    event_id is stored as a FIELD, not a tag, on events points - and
-    InfluxDB's delete API predicates can only match on tags/measurement,
-    not field values. So we can't delete "everything with this event_id"
-    directly. Instead we rely on tag + calendar + source + the event's
-    exact timestamp being unique in practice for a personal calendar -
-    a narrow (1 second) time window keeps this safe from touching
-    neighbouring points. Known edge case: two events in the same
-    calendar starting at the exact same second would collide here; for
-    a personal calendar this is vanishingly unlikely and not worth the
-    complexity of handling. Note this predicate doesn't filter on
-    `user` (event_id/tag/calendar/source uniqueness already scopes it
-    tightly enough in practice, and `user` isn't guaranteed stable if
-    an account were ever renamed - a real but narrow edge case).
-    '''
-    client = get_client()
-    delete_api = client.delete_api()
-    start = timestamp
-    stop = timestamp + timedelta(seconds=1)
-    predicate = f'_measurement="events" AND tag="{tag}" AND calendar="{calendar}" AND source="calendar"'
-    delete_api.delete(start, stop, predicate, bucket=INFLUX_BUCKET, org=INFLUX_ORG)
 
 
 def _run_reprocess(user_id: int, username: str):
@@ -94,6 +74,14 @@ def _run_reprocess(user_id: int, username: str):
             _states[user_id]["total"] = len(cached)
 
         for ev in cached:
+            if ev["manually_tagged"]:
+                # Respect the manual override - see the manually_tagged
+                # comment in schema.sql. Still counts as "processed" for
+                # progress tracking, just never "changed".
+                with _lock:
+                    _states[user_id]["processed"] += 1
+                continue
+
             calendar = db.get_calendar(ev["calendar_id"])
             if calendar is None:
                 with _lock:
@@ -108,7 +96,7 @@ def _run_reprocess(user_id: int, username: str):
                 removed = set(old_tags) - set(new_tags)
                 for tag in removed:
                     try:
-                        _delete_event_tag_point(tag=tag, calendar=calendar["name"], timestamp=start_dt)
+                        delete_event_tag_point(tag=tag, source="calendar", timestamp=start_dt, calendar=calendar["name"])
                     except Exception as e:
                         logger.warning(
                             f"Reprocess (user={username}): failed to delete stale point "
@@ -127,7 +115,7 @@ def _run_reprocess(user_id: int, username: str):
                     calendar=calendar["name"],
                     duration_min=ev["duration_min"],
                 )
-                db.update_cached_event_tags(ev["event_id"], new_tags)
+                db.set_cached_event_tags(ev["event_id"], new_tags, manually_tagged=False)
                 with _lock:
                     _states[user_id]["changed"] += 1
 

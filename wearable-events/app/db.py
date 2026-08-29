@@ -10,16 +10,36 @@ from app.config import SQLITE_PATH
 _SCHEMA_PATH = Path(__file__).parent.parent / "schema.sql"
 
 
+def _ensure_column(conn, table: str, column: str, coltype_and_default: str):
+    ''' Adds a column to an existing table if it's missing, via
+    ALTER TABLE. Exists because `CREATE TABLE IF NOT EXISTS` in
+    schema.sql is a no-op against a database that already has the table
+    from before that column was added - it does NOT retroactively add
+    new columns to existing installs. This is the lightweight migration
+    mechanism for this app (deliberately not a full framework like
+    Alembic - overkill for a handful of personal-scale tables). Add a
+    new _ensure_column() call here, alongside the schema.sql change,
+    any time a column is added to an existing table in the future.
+    '''
+    cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype_and_default}")
+        logger.info(f"Migrated existing database: added column {table}.{column}")
+
+
 def init_db():
     ''' Create config.db (and its parent dir) if it doesn't exist yet,
-    and apply schema.sql. Safe to call on every startup - all statements
-    use IF NOT EXISTS / INSERT OR IGNORE.
+    apply schema.sql, and run any pending lightweight migrations for
+    existing installs. Safe to call on every startup - schema.sql uses
+    IF NOT EXISTS / INSERT OR IGNORE, and _ensure_column calls are
+    similarly idempotent (no-op once the column already exists).
     '''
     db_path = Path(SQLITE_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     with get_conn() as conn:
         conn.executescript(_SCHEMA_PATH.read_text())
+        _ensure_column(conn, "calendar_events_cache", "manually_tagged", "INTEGER NOT NULL DEFAULT 0")
     logger.info(f"Initialized config db at {SQLITE_PATH}")
 
 
@@ -234,6 +254,13 @@ def list_tag_definitions(user_id: int):
 
 def upsert_cached_event(event_id: str, user_id: int, calendar_id: int, title: str, description: str,
                          start_iso: str, duration_min: int | None, applied_tags: list[str]):
+    ''' Called on every calendar sync. Deliberately preserves applied_tags
+    (and the manually_tagged flag) for events a person has manually
+    retagged via the Timeline UI - everything else (title, description,
+    timing) still updates normally, only the tags are protected. Without
+    this, a manual fix would get silently reverted on the very next
+    15-minute sync.
+    '''
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO calendar_events_cache
@@ -246,10 +273,22 @@ def upsert_cached_event(event_id: str, user_id: int, calendar_id: int, title: st
                  description = excluded.description,
                  start_iso = excluded.start_iso,
                  duration_min = excluded.duration_min,
-                 applied_tags = excluded.applied_tags,
+                 applied_tags = CASE
+                   WHEN calendar_events_cache.manually_tagged = 1 THEN calendar_events_cache.applied_tags
+                   ELSE excluded.applied_tags
+                 END,
                  updated_at = datetime('now')""",
             (event_id, user_id, calendar_id, title, description, start_iso, duration_min, json.dumps(applied_tags))
         )
+
+
+def get_cached_event(event_id: str, user_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM calendar_events_cache WHERE event_id = ? AND user_id = ?",
+            (event_id, user_id)
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def list_cached_events(user_id: int):
@@ -259,9 +298,13 @@ def list_cached_events(user_id: int):
         ).fetchall()]
 
 
-def update_cached_event_tags(event_id: str, tags: list[str]):
+def set_cached_event_tags(event_id: str, tags: list[str], *, manually_tagged: bool):
+    ''' Used both by the manual tag-override endpoint (manually_tagged=True)
+    and by the background sync/reprocess jobs writing auto-classified
+    tags for a not-yet-overridden event (manually_tagged=False).
+    '''
     with get_conn() as conn:
         conn.execute(
-            "UPDATE calendar_events_cache SET applied_tags = ?, updated_at = datetime('now') WHERE event_id = ?",
-            (json.dumps(tags), event_id)
+            "UPDATE calendar_events_cache SET applied_tags = ?, manually_tagged = ?, updated_at = datetime('now') WHERE event_id = ?",
+            (json.dumps(tags), int(manually_tagged), event_id)
         )

@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS calendar_events_cache (
     start_iso     TEXT NOT NULL,
     duration_min  INTEGER,
     applied_tags  TEXT NOT NULL DEFAULT '[]',
+    -- Set when a person manually edits this event's tags via the
+    -- Timeline UI. While true, sync_calendar() and reprocess both skip
+    -- reclassifying this event, so a manual fix doesn't get silently
+    -- reverted by the next scheduled sync or a future keyword-rule
+    -- change. There's currently no UI to clear this flag and return to
+    -- automatic classification - see the wearable-events README.
+    manually_tagged INTEGER NOT NULL DEFAULT 0,
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

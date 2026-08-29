@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime, timezone
 
@@ -93,6 +94,15 @@ def sync_calendar(calendar: dict, rules: list[dict], username: str):
 
             tags = classify_event(title, description, rules, calendar["default_tag"])
             event_id = calendar_event_id(calendar["name"], start_dt.isoformat(), title)
+
+            existing = db.get_cached_event(event_id, calendar["user_id"])
+            if existing and existing["manually_tagged"]:
+                # Respect a manual tag override from the Timeline UI -
+                # use the cached tags instead of what the ruleset would
+                # produce, so a scheduled sync doesn't silently revert
+                # someone's manual fix. See the manually_tagged comment
+                # in schema.sql.
+                tags = json.loads(existing["applied_tags"] or "[]")
 
             write_event_points(
                 user=username,

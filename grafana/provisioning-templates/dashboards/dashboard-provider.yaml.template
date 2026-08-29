@@ -1,0 +1,21 @@
+apiVersion: 1
+
+# TEMPLATE - no $VAR tokens currently, but rendered through the same
+# envsubst pipeline as the other provisioning files for a uniform
+# mechanism (see render-provisioning.sh).
+#
+# Tells Grafana to load any *.json dashboard files it finds in this same
+# folder automatically on startup. allowUiUpdates: true means you can
+# still edit panels in the Grafana UI without it fighting you - those
+# edits just won't survive a container recreate, since the JSON file
+# here is the source of truth on every restart.
+providers:
+  - name: "Biomarker Dashboards"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

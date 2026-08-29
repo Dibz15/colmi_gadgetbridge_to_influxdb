@@ -97,8 +97,8 @@ services:
           description:
             en_us: "InfluxDB config"
 
-  # Renders the Grafana provisioning templates (datasource + alerting)
-  # with envsubst before Grafana starts, then exits. Exists because
+  # Renders the Grafana provisioning templates (datasource + alerting +
+  # dashboards) with envsubst before Grafana starts, then exits. Exists because
   # Grafana's alert-rule/contact-point provisioning does NOT support
   # $ENV_VAR interpolation the way datasource provisioning does - a
   # literal "$INFLUXDB_BUCKET" string was being sent straight to

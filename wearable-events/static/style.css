@@ -319,6 +319,105 @@ main {
   margin: 0;
 }
 
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.timeline-controls input[type="date"] {
+  padding: 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-active);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.timeline-day-heading {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.timeline-day-heading:first-child {
+  margin-top: 0;
+}
+
+.timeline-entry {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  border-left: 3px solid var(--surface-active);
+}
+
+.timeline-entry-calendar {
+  border-left-color: var(--accent);
+}
+
+.timeline-entry-manual {
+  border-left-color: #8fd19e;
+}
+
+.timeline-entry-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.timeline-time {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-kind-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+}
+
+.timeline-kind-badge.cal {
+  background: var(--accent);
+  color: #14151a;
+}
+
+.timeline-kind-badge.manual {
+  background: #8fd19e;
+  color: #14151a;
+}
+
+.timeline-title {
+  font-weight: 600;
+}
+
+.timeline-cal-name {
+  font-size: 0.85rem;
+}
+
+.timeline-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.chip-small {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--surface-active);
+}
+
 .small-note {
   font-size: 0.85rem;
   margin-top: -0.5rem;

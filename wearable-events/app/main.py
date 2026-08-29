@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.config import (
 from app.ics_sync import sync_all_calendars
 from app.influx import (
     find_last_completed_sleep_session,
+    find_manual_events_in_range,
     list_distinct_sensor_users,
     manual_event_id,
     write_event_points,
@@ -49,6 +51,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Wearable Events", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def no_cache_static(request: Request, call_next):
+    ''' Forces the browser to always revalidate static assets (HTML/JS/
+    CSS) rather than heuristically caching them. FastAPI's StaticFiles
+    mount sends Last-Modified/ETag but no explicit Cache-Control, and
+    browsers can decide to skip revalidation entirely for a while -
+    meaning a shipped frontend fix can silently not take effect in an
+    already-open browser tab, with no visible sign anything is wrong.
+    This app is small and self-hosted, so trading away browser caching
+    for "you always get what's actually on disk" is the right default.
+    '''
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.endswith((".js", ".css", ".html")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # --- request/response models ---
@@ -207,6 +226,62 @@ def post_event(payload: ManualEventIn, current_user: dict = Depends(get_current_
         duration_min=payload.duration_min,
     )
     return {"event_id": event_id, "tags": payload.tags}
+
+
+# --- timeline (read-only merged view) ---
+
+@app.get("/timeline")
+def get_timeline(start: str | None = None, end: str | None = None, current_user: dict = Depends(get_current_user)):
+    ''' Read-only merged view of calendar-derived events (from the local
+    cache, so no ICS re-fetch needed) and manual tag logs (from
+    InfluxDB), sorted chronologically. Powers the Timeline tab.
+
+    `start`/`end` are ISO date strings (YYYY-MM-DD). Defaults to the
+    last 7 days through tomorrow if omitted.
+    '''
+    now = datetime.now(timezone.utc)
+    try:
+        start_dt = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) if start else now - timedelta(days=7)
+        end_dt = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else now + timedelta(days=1)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid start/end date: {e}") from e
+
+    user_id = current_user["id"]
+    calendar_names = {c["id"]: c["name"] for c in db.list_calendars(user_id)}
+
+    entries = []
+
+    # Calendar-derived - read straight from the local cache, no ICS
+    # fetch, so this is always fast and doesn't touch external feeds.
+    for ev in db.list_cached_events(user_id):
+        try:
+            ev_start = datetime.fromisoformat(ev["start_iso"])
+        except ValueError:
+            continue
+        if not (start_dt <= ev_start < end_dt):
+            continue
+        entries.append({
+            "kind": "calendar",
+            "timestamp": ev["start_iso"],
+            "title": ev["title"],
+            "calendar": calendar_names.get(ev["calendar_id"], "(deleted calendar)"),
+            "tags": json.loads(ev["applied_tags"] or "[]"),
+            "duration_min": ev["duration_min"],
+        })
+
+    # Manual taps - from InfluxDB, reconstructed per event_id
+    for ev in find_manual_events_in_range(current_user["username"], start_dt, end_dt):
+        entries.append({
+            "kind": "manual",
+            "timestamp": ev["timestamp"],
+            "title": None,
+            "calendar": None,
+            "tags": ev["tags"],
+            "duration_min": ev["duration_min"],
+        })
+
+    entries.sort(key=lambda e: e["timestamp"])
+    return entries
 
 
 # --- sleep ---

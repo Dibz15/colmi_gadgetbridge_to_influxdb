@@ -419,6 +419,104 @@ document.getElementById("tagdef-add-submit").addEventListener("click", async () 
   }
 });
 
+// --- Timeline tab ---
+function formatDateInput(d) {
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function defaultTimelineRange() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - 7);
+  const end = new Date(now);
+  end.setDate(end.getDate() + 1);
+  return { start: formatDateInput(start), end: formatDateInput(end) };
+}
+
+function groupByDay(entries) {
+  const groups = {};
+  entries.forEach(entry => {
+    const day = entry.timestamp.slice(0, 10); // YYYY-MM-DD from ISO timestamp
+    if (!groups[day]) groups[day] = [];
+    groups[day].push(entry);
+  });
+  return groups;
+}
+
+function renderTagChips(tags) {
+  if (!tags || !tags.length) return "";
+  return `<div class="timeline-tags">${tags.map(t => `<span class="chip-small">${t}</span>`).join("")}</div>`;
+}
+
+async function loadTimeline() {
+  const container = document.getElementById("timeline-list");
+  const start = document.getElementById("timeline-start").value;
+  const end = document.getElementById("timeline-end").value;
+
+  container.innerHTML = '<p class="muted">Loading...</p>';
+  try {
+    const params = new URLSearchParams();
+    if (start) params.set("start", start);
+    if (end) params.set("end", end);
+    const entries = await api(`/timeline?${params.toString()}`);
+
+    if (!entries.length) {
+      container.innerHTML = '<p class="muted">Nothing in this range yet.</p>';
+      return;
+    }
+
+    const groups = groupByDay(entries);
+    const days = Object.keys(groups).sort().reverse(); // most recent day first
+
+    container.innerHTML = "";
+    days.forEach(day => {
+      const heading = document.createElement("div");
+      heading.className = "timeline-day-heading";
+      heading.textContent = day;
+      container.appendChild(heading);
+
+      groups[day].forEach(entry => {
+        const row = document.createElement("div");
+        row.className = `timeline-entry timeline-entry-${entry.kind}`;
+        const time = entry.timestamp.slice(11, 16); // HH:MM
+
+        const durationNote = entry.duration_min ? ` · ${entry.duration_min}min` : "";
+
+        if (entry.kind === "calendar") {
+          row.innerHTML = `
+            <div class="timeline-entry-main">
+              <span class="timeline-time">${time}</span>
+              <span class="timeline-kind-badge cal">Calendar</span>
+              <span class="timeline-title">${entry.title || "(untitled event)"}</span>
+              <span class="muted timeline-cal-name">${entry.calendar || ""}${durationNote}</span>
+            </div>
+            ${renderTagChips(entry.tags)}
+          `;
+        } else {
+          row.innerHTML = `
+            <div class="timeline-entry-main">
+              <span class="timeline-time">${time}</span>
+              <span class="timeline-kind-badge manual">Logged</span>
+              <span class="muted">${durationNote}</span>
+            </div>
+            ${renderTagChips(entry.tags)}
+          `;
+        }
+        container.appendChild(row);
+      });
+    });
+  } catch (e) {
+    container.innerHTML = `<p class="muted">Failed to load: ${e.message}</p>`;
+  }
+}
+
+function initTimelineControls() {
+  const defaults = defaultTimelineRange();
+  document.getElementById("timeline-start").value = defaults.start;
+  document.getElementById("timeline-end").value = defaults.end;
+  document.getElementById("timeline-refresh").addEventListener("click", loadTimeline);
+}
+
 // --- init ---
 async function initApp() {
   try {
@@ -446,6 +544,8 @@ function showApp(me) {
   loadUserList();
   loadClaimPicker();
   checkReprocessOnLoad();
+  initTimelineControls();
+  loadTimeline();
 }
 
 document.getElementById("login-submit").addEventListener("click", async () => {

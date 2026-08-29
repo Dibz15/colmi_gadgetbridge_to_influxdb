@@ -31,6 +31,7 @@
   <button class="tab-btn active" data-tab="tags">Tags</button>
   <button class="tab-btn" data-tab="sleep">Sleep</button>
   <button class="tab-btn" data-tab="calendars">Calendars</button>
+  <button class="tab-btn" data-tab="timeline">Timeline</button>
   <button class="tab-btn" data-tab="manage">Manage</button>
 </nav>
 
@@ -77,6 +78,18 @@
       <button id="cal-add-submit">Add</button>
     </details>
     <p id="cal-status" class="status"></p>
+  </section>
+
+  <section id="tab-timeline" class="tab-panel">
+    <div class="timeline-controls">
+      <input type="date" id="timeline-start">
+      <span class="muted">to</span>
+      <input type="date" id="timeline-end">
+      <button id="timeline-refresh" class="small-btn">Refresh</button>
+    </div>
+    <div id="timeline-list">
+      <p class="muted">Loading...</p>
+    </div>
   </section>
 
   <section id="tab-manage" class="tab-panel">

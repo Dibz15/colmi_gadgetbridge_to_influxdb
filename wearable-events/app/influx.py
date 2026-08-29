@@ -162,6 +162,71 @@ def find_last_completed_sleep_session(user: str, lookback_days: int = 7) -> dict
     return None
 
 
+def find_manual_events_in_range(user: str, start: datetime, end: datetime) -> list[dict]:
+    ''' Read-only query for manual tag taps (source="manual") in the
+    events measurement, reconstructed into one entry per event_id.
+
+    Each manual tap writes one Influx POINT per tag (all sharing the
+    same event_id and timestamp), and each point contributes multiple
+    raw rows in Flux's default output (one row per field). Without
+    pivoting, `event_id` and `duration_min` would only be visible on
+    the specific row for that field, not alongside the `tag` value on
+    the same row - so this uses pivot(rowKey: ["_time", "tag"], ...) to
+    recombine each point's fields onto one row first, then groups those
+    rows by event_id in Python.
+    '''
+    client = get_client()
+    query_api = client.query_api()
+
+    start_iso = start.astimezone(timezone.utc).isoformat()
+    stop_iso = end.astimezone(timezone.utc).isoformat()
+
+    flux = f'''
+    from(bucket: "{INFLUX_BUCKET}")
+      |> range(start: {start_iso}, stop: {stop_iso})
+      |> filter(fn: (r) => r._measurement == "{EVENTS_MEASUREMENT}")
+      |> filter(fn: (r) => r.user == "{user}")
+      |> filter(fn: (r) => r.source == "manual")
+      |> pivot(rowKey: ["_time", "tag"], columnKey: ["_field"], valueColumn: "_value")
+    '''
+
+    try:
+        tables = query_api.query(flux)
+    except Exception as e:
+        logger.error(f"Failed to query manual events for user={user}: {e}")
+        return []
+
+    grouped: dict[str, dict] = {}
+    for table in tables:
+        for record in table.records:
+            event_id = record.values.get("event_id")
+            if not event_id:
+                continue
+            tag_value = record.values.get("tag")
+            duration_min = record.values.get("duration_min")
+
+            entry = grouped.setdefault(event_id, {
+                "event_id": event_id,
+                "timestamp": record.get_time(),
+                "tags": set(),
+                "duration_min": None,
+            })
+            if tag_value:
+                entry["tags"].add(tag_value)
+            if duration_min is not None:
+                entry["duration_min"] = duration_min
+
+    return [
+        {
+            "event_id": e["event_id"],
+            "timestamp": e["timestamp"].isoformat(),
+            "tags": sorted(e["tags"]),
+            "duration_min": e["duration_min"],
+        }
+        for e in grouped.values()
+    ]
+
+
 def list_distinct_sensor_users(lookback_days: int = 365) -> list[str]:
     ''' Returns the distinct `user` tag values seen in the ring parser's
     sensor measurement over the lookback window. Used to power the

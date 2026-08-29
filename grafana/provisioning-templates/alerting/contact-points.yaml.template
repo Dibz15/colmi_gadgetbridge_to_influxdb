@@ -1,5 +1,13 @@
 apiVersion: 1
 
+# TEMPLATE - rendered via envsubst before Grafana starts (see the
+# grafana-provisioning-init service in docker-compose.yml). Grafana's
+# alert-rule provisioning does NOT support $ENV_VAR interpolation inside
+# the `model`/`settings` blocks natively (confirmed the hard way - a
+# literal "$INFLUXDB_BUCKET" string reached InfluxDB and failed with
+# "could not find bucket"), which is why this template is pre-processed
+# rather than relying on Grafana to do it.
+#
 # Grafana's webhook contact point can't customize its outgoing JSON body
 # shape (confirmed in Grafana's own docs - only `title` and `message` are
 # templatable, everything else is a fixed schema). Rather than standing
@@ -9,13 +17,14 @@ apiVersion: 1
 # template expressions passed as URL query parameters.
 #
 # Curly braces in the query string are percent-encoded (%7B%7B / %7D%7D
-# for {{ / }}) since raw braces aren't valid in a URL query string.
+# for {{ / }}) since raw braces aren't valid in a URL query string. These
+# are ntfy's own template syntax, not envsubst tokens - envsubst only
+# touches the explicit $VAR names below, nothing else in this file.
 #
 # NOTE: this provisioning file was written against Grafana's documented
 # webhook contact point schema but has not been exercised against a
-# live Grafana instance in this environment. After first boot, check
-# Alerting -> Contact points -> ntfy -> Test to confirm a notification
-# actually arrives before relying on it.
+# live Grafana instance. After first boot, check Alerting -> Contact
+# points -> ntfy -> Test to confirm a notification actually arrives.
 
 contactPoints:
   - orgId: 1

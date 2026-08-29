@@ -1,12 +1,20 @@
 apiVersion: 1
 
+# TEMPLATE - rendered via envsubst before Grafana starts (see the
+# grafana-provisioning-init service in docker-compose.yml). Grafana's
+# alert-rule provisioning does NOT support $ENV_VAR interpolation inside
+# the `model` blocks natively (confirmed the hard way - a literal
+# "$INFLUXDB_BUCKET" string reached InfluxDB and failed with "could not
+# find bucket"), which is why this template is pre-processed rather than
+# relying on Grafana to do it.
+#
 # NOTE: written against Grafana's documented file-provisioning schema for
-# unified alerting, not live-tested against a running Grafana instance in
-# this environment. After first boot, check Alerting -> Alert rules to
-# confirm this loaded correctly, and use "Preview" on the rule to sanity
-# check the Flux queries return data once your ring has a few days of
-# history synced. Before that, expect this rule to sit in "No data"
-# state, which is the intended (non-alerting) behaviour, not a bug.
+# unified alerting, not fully verified against a running Grafana
+# instance. After first boot, check Alerting -> Alert rules to confirm
+# this loaded correctly, and use "Preview" on the rule to sanity check
+# the Flux queries return data once your ring has a few days of history
+# synced. Before that, expect this rule to sit in "No data" state, which
+# is the intended (non-alerting) behaviour, not a bug.
 #
 # This is deliberately just ONE rule (HRV drop vs baseline) as a worked
 # template - copy this block and adjust the Flux queries/thresholds to

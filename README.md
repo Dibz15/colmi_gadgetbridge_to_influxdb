@@ -82,9 +82,9 @@ Two custom images are built from this repo (see
 │   ├── app/gadgetbridge_to_influxdb.py    reads Gadgetbridge's exported DB, writes to InfluxDB
 │   ├── Dockerfile
 │   └── entrypoint.sh
-├── grafana/provisioning/           Grafana datasource + alerting config-as-code (see step 7)
-│   ├── datasources/influxdb.yaml
-│   └── alerting/                   rules.yaml, contact-points.yaml, notification-policies.yaml
+├── grafana/                         Grafana datasource + alerting config-as-code (see step 7)
+│   ├── provisioning-templates/      templates - NOT read directly by Grafana, see render-provisioning.sh
+│   └── render-provisioning.sh       renders templates into a Docker volume before Grafana starts
 └── wearable-events/                calendar tagging + subjective sleep score, has its own web UI
     ├── app/                        FastAPI backend (login, calendars, keyword rules, reprocessing)
     ├── static/                     the web UI itself

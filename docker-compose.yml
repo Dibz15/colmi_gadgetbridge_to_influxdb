@@ -97,6 +97,37 @@ services:
           description:
             en_us: "InfluxDB config"
 
+  # Renders the Grafana provisioning templates (datasource + alerting)
+  # with envsubst before Grafana starts, then exits. Exists because
+  # Grafana's alert-rule/contact-point provisioning does NOT support
+  # $ENV_VAR interpolation the way datasource provisioning does - a
+  # literal "$INFLUXDB_BUCKET" string was being sent straight to
+  # InfluxDB and failing with "could not find bucket". Templating it
+  # ourselves keeps every value centralized in .env instead of hardcoding
+  # secrets (like the ntfy password) into repo-tracked YAML.
+  grafana-provisioning-init:
+    image: alpine:3.20
+    container_name: biomarker-grafana-provisioning-init
+    restart: "no"
+    environment:
+      INFLUX_URL: "http://influxdb:8086"
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-home}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-health}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
+      ALERT_HRV_USER: ${ALERT_HRV_USER:-primary}
+      NTFY_TOPIC: ${NTFY_TOPIC:-biomarker-alerts}
+      NTFY_USER: ${NTFY_GRAFANA_USER:-grafana}
+      NTFY_PASSWORD: ${NTFY_GRAFANA_PASSWORD:-changeme_ntfy_password}
+      NTFY_PRIORITY: ${NTFY_PRIORITY:-4}
+    volumes:
+      - ./grafana/provisioning-templates:/templates:ro
+      - ./grafana/render-provisioning.sh:/render-provisioning.sh:ro
+      - grafana-provisioning:/output
+    command: sh /render-provisioning.sh
+    networks:
+      - biomarker-net
+
   grafana:
     image: grafana/grafana-oss:latest
     container_name: biomarker-grafana
@@ -108,43 +139,22 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme_grafana_password}
       GF_INSTALL_PLUGINS: ""
       # Alerting is enabled by default in modern Grafana - no extra flag
-      # needed for the provisioned datasource/contact point/rule below
-      # to take effect.
-
-      # --- Consumed by grafana/provisioning/datasources/influxdb.yaml ---
-      INFLUX_URL: "http://influxdb:8086"
-      INFLUXDB_ORG: ${INFLUXDB_ORG:-home}
-      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-health}
-      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
-
-      # --- Consumed by grafana/provisioning/alerting/rules.yaml ---
-      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
-      # Which person's HRV this alert rule watches - matches the
-      # GADGETBRIDGE_USER value on their ring parser instance. This
-      # rule is single-user by design (see rules.yaml comments); a
-      # second household member would need their own copy of the rule
-      # block with a different ALERT_HRV_USER value.
-      ALERT_HRV_USER: ${ALERT_HRV_USER:-primary}
-
-      # --- Consumed by grafana/provisioning/alerting/contact-points.yaml ---
-      # Must match a topic/user you've granted write access to via
-      # `ntfy access` (see the ntfy setup step in the README) - Grafana
-      # authenticates to ntfy with HTTP Basic Auth using these creds.
-      NTFY_TOPIC: ${NTFY_TOPIC:-biomarker-alerts}
-      NTFY_USER: ${NTFY_GRAFANA_USER:-grafana}
-      NTFY_PASSWORD: ${NTFY_GRAFANA_PASSWORD:-changeme_ntfy_password}
-      # ntfy priority scale: 1=min, 3=default, 5=urgent (bypasses phone
-      # silent/DND on most clients) - 4 (high) is a reasonable default
-      # for a "worth looking at today" biomarker alert.
-      NTFY_PRIORITY: ${NTFY_PRIORITY:-4}
+      # needed for the provisioned datasource/contact point/rule to
+      # take effect, as long as grafana-provisioning-init has already
+      # rendered them into the grafana-provisioning volume (see
+      # depends_on below).
     volumes:
       - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/grafana/data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-provisioning:/etc/grafana/provisioning:ro
     networks:
       - biomarker-net
     depends_on:
-      - influxdb
-      - ntfy
+      influxdb:
+        condition: service_started
+      ntfy:
+        condition: service_started
+      grafana-provisioning-init:
+        condition: service_completed_successfully
     x-casaos:
       envs:
         - container: GF_SECURITY_ADMIN_PASSWORD
@@ -311,3 +321,10 @@ services:
 networks:
   biomarker-net:
     driver: bridge
+
+volumes:
+  # Rendered Grafana provisioning output (from grafana/provisioning-templates/
+  # via grafana-provisioning-init) - a named Docker volume rather than a
+  # bind mount, since it's generated content, not something to edit by
+  # hand or track in the repo.
+  grafana-provisioning:

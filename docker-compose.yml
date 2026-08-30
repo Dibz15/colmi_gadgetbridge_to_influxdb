@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ---------------------------------------------------------------------------
 # Biomarker stack: InfluxDB (storage) + Grafana (dashboards) + ntfy (alerts)
 #
@@ -227,6 +225,8 @@ services:
 
       # --- Query window ---
       QUERY_DURATION: ${QUERY_DURATION:-86400}
+      MAX_CATCHUP_SECONDS: ${MAX_CATCHUP_SECONDS:-2592000}
+      CHECKPOINT_OVERLAP_SECONDS: ${CHECKPOINT_OVERLAP_SECONDS:-300}
 
       # --- InfluxDB target - same network, so use the service name.
       # Reuses the same INFLUXDB_ORG/BUCKET/TOKEN vars as the influxdb
@@ -249,7 +249,8 @@ services:
     networks:
       - biomarker-net
     depends_on:
-      - influxdb
+      influxdb:
+        condition: service_started
     x-casaos:
       envs:
         - container: WEBDAV_URL

@@ -5,8 +5,9 @@ a WebDAV server (e.g. Nextcloud) and writes biomarker data into
 [InfluxDB](https://github.com/influxdata/influxdb) for dashboarding/alerting
 in Grafana.
 
-This repo is a fork of [bentasker/gadgetbridge_to_influxdb](https://github.com/bentasker/gadgetbridge_to_influxdb).
-The original targets Huami/Amazfit devices; this fork adapted the
+This repo is a fork of [Dibz15/colmi_gadgetbridge_to_influxdb](https://github.com/Dibz15/colmi_gadgetbridge_to_influxdb),
+itself forked from [bentasker/gadgetbridge_to_influxdb](https://github.com/bentasker/gadgetbridge_to_influxdb).
+The original targets Huami/Amazfit devices; the Dibz15 fork adapted the
 queries for **Colmi/Yawell smart rings** (R02/R03/R06/R09/R10/R11/R12
 family). This fork adds:
 
@@ -65,7 +66,9 @@ duplicating points, so re-processing the same file repeatedly is harmless.
 | `WEBDAV_PASS` | WebDAV password (use a Nextcloud **app password**, not your login password) | — (required) |
 | `WEBDAV_PATH` | Path to the export directory on the WebDAV server, e.g. `files/<nextcloud_user>/GadgetBridge/` | — (required) |
 | `EXPORT_FILENAME` | Filename of the export on the WebDAV server | `gadgetbridge` |
-| `QUERY_DURATION` | How far back (seconds) to query on each run | `86400` |
+| `QUERY_DURATION` | How far back (seconds) to query on the **first run only** - see [Checkpointed sync](#checkpointed-sync) below | `86400` |
+| `MAX_CATCHUP_SECONDS` | Safety cap on catch-up distance if the last checkpoint is very old | `2592000` (30 days) |
+| `CHECKPOINT_OVERLAP_SECONDS` | Overlap subtracted from the checkpoint before resuming, to avoid missing a boundary sample | `300` (5 min) |
 | `INFLUXDB_URL` | InfluxDB server URL | — (required) |
 | `INFLUXDB_TOKEN` | InfluxDB API token (or `user:pass` on 1.x) | — (required) |
 | `INFLUXDB_ORG` | InfluxDB org name/ID | — (required) |
@@ -84,6 +87,32 @@ duplicating points, so re-processing the same file repeatedly is harmless.
 > against your own exported `.db` schema (`sqlite3 gadgetbridge.sqlite
 > .schema`) if any expected metric is missing from InfluxDB after a sync —
 > table/column names can drift slightly between Gadgetbridge versions.
+
+---
+
+## Checkpointed sync
+
+Each run doesn't just blindly re-query the last `QUERY_DURATION` seconds
+every time. Instead it checks InfluxDB for the most recent `last_seen`
+value from its own `sync_check` points (written every run as a
+sync-health marker) and resumes from there:
+
+- **No checkpoint found** (first run ever) — falls back to
+  `QUERY_DURATION`, same as the original fixed-window behaviour.
+- **Checkpoint recent** (normal operation) — resumes from just past the
+  checkpoint, which is usually *narrower* than `QUERY_DURATION` would
+  be, cutting down on redundant re-writes of unchanged historical data.
+- **Checkpoint old** (container was down for a while) — resumes from
+  the checkpoint even if that's *further back* than `QUERY_DURATION`,
+  so a gap from downtime actually gets backfilled instead of silently
+  lost. Clamped to `MAX_CATCHUP_SECONDS` so a very old or corrupted
+  checkpoint can't trigger an unbounded historical resync.
+
+This relies on the `sync_check`/`last_seen` point already being written
+every run — if you're running a much older build of this script that
+predates it, the checkpoint lookup will find nothing and fall back to
+`QUERY_DURATION` correctly, it just won't have gap-filling behaviour
+until it's had at least one successful run to establish a checkpoint.
 
 ---
 

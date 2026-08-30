@@ -63,7 +63,11 @@ WEBDAV_PASS = os.getenv("WEBDAV_PASS", False)
 # What's the filename of the file on the webdav server?
 EXPORT_FILE = os.getenv("EXPORT_FILENAME", "Gadgetbridge.db")
 
-# How far back in time should we query when extracting stats?
+# How far back in time should we query on the FIRST EVER run (before
+# any checkpoint exists in InfluxDB)? After that, every subsequent run
+# resumes from the last known checkpoint instead - see
+# get_last_checkpoint_ns() - so this value stops mattering once a
+# checkpoint exists, except as the fallback if checkpoint lookup fails.
 QUERY_DURATION = int(os.getenv("QUERY_DURATION", "86400"))
 
 # InfluxDB settings
@@ -118,6 +122,20 @@ SLEEP_STAGE_MAP = {
     1: "awake",
 }
 
+# Safety cap on catch-up distance if the checkpoint turns out to be
+# very old (e.g. the container was down for a while) - without this, a
+# corrupted or ancient checkpoint could trigger an unbounded historical
+# resync. Default 30 days; raise it if you need to backfill further
+# after genuinely longer downtime.
+MAX_CATCHUP_SECONDS = int(os.getenv("MAX_CATCHUP_SECONDS", str(30 * 86400)))
+
+# Small overlap subtracted from the checkpoint before resuming, so a
+# sample landing exactly at the boundary can't be missed due to a
+# rounding/precision edge case. Re-querying a few already-processed
+# rows is harmless - InfluxDB overwrites points with identical
+# measurement+tags+timestamp rather than duplicating them.
+CHECKPOINT_OVERLAP_SECONDS = int(os.getenv("CHECKPOINT_OVERLAP_SECONDS", "300"))
+
 ### Config ends
 
 
@@ -157,6 +175,64 @@ def to_nanos(ts):
     if COLMI_TIMESTAMPS_ARE_MS:
         return ts * 1000000
     return ts * 1000000000
+
+
+def from_nanos(ns):
+    ''' Inverse of to_nanos() - converts an InfluxDB-native nanosecond
+    timestamp back down to whatever unit the local COLMI_* TIMESTAMP
+    columns actually use (ms or s), honouring COLMI_TIMESTAMPS_ARE_MS
+    the same way to_nanos does. Used to turn a checkpoint read back
+    from InfluxDB (nanoseconds) into a bound usable in a SQLite query
+    against the raw export (ms or s).
+    '''
+    if COLMI_TIMESTAMPS_ARE_MS:
+        return ns // 1000000
+    return ns // 1000000000
+
+
+def get_last_checkpoint_ns(client) -> int | None:
+    ''' Queries InfluxDB for the most recent `last_seen` value from our
+    own sync_check points, so a run can resume from there instead of
+    blindly re-querying "now - QUERY_DURATION" every single time.
+
+    Searches a full year back so a checkpoint is found regardless of
+    how long the container's been down - the actual catch-up distance
+    is separately clamped by MAX_CATCHUP_SECONDS by the caller, once
+    this returns, so searching widely here doesn't risk an unbounded
+    resync on its own.
+
+    Returns None if nothing is found (first run ever, or the query
+    itself failed) - callers should fall back to the QUERY_DURATION-
+    based bound in that case, exactly like before this feature existed.
+
+    If multiple devices/series exist, returns the MINIMUM of their
+    checkpoints - conservative, so we don't skip data for whichever
+    device happens to be furthest behind. Re-querying an
+    already-synced device's recent data is harmless (InfluxDB
+    overwrites identical points rather than duplicating them).
+    '''
+    query_api = client.query_api()
+    flux = f'''
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -365d)
+      |> filter(fn: (r) => r._measurement == "{INFLUXDB_MEASUREMENT}")
+      |> filter(fn: (r) => r.sample_type == "sync_check")
+      |> filter(fn: (r) => r.user == "{GADGETBRIDGE_USER}")
+      |> filter(fn: (r) => r._field == "last_seen")
+      |> max()
+    '''
+    try:
+        tables = query_api.query(flux)
+    except Exception as e:
+        logger.warning(f"Could not query last checkpoint (treating as first run): {e}")
+        return None
+
+    values = [int(record.get_value()) for table in tables for record in table.records]
+    if not values:
+        logger.debug("No prior checkpoint found - this looks like the first run")
+        return None
+
+    return min(values)
 
 
 def _device_tags_factory(devices):
@@ -211,20 +287,51 @@ def _run_query(cur, table_name, query) -> list|None:
         return None
 
 
-def extract_data(cur):
+def extract_data(cur, client):
     ''' Query the database for data
     '''
     results = []
     devices = {}
     devices_observed = {}
 
-    query_start_bound = int(time.time()) - QUERY_DURATION
-    query_start_bound_scaled = query_start_bound * 1000 if COLMI_TIMESTAMPS_ARE_MS else query_start_bound
+    now_seconds = int(time.time())
+    fallback_bound_seconds = now_seconds - QUERY_DURATION
+
+    checkpoint_ns = get_last_checkpoint_ns(client)
+
+    if checkpoint_ns is not None:
+        # Convert the checkpoint (nanoseconds, InfluxDB-native) down to
+        # raw-sqlite-column units (ms or s) directly, then subtract the
+        # overlap margin - both done in "scaled" units throughout so
+        # there's no unit-mixing between this path and the fallback path.
+        checkpoint_scaled = from_nanos(checkpoint_ns)
+        unit_multiplier = 1000 if COLMI_TIMESTAMPS_ARE_MS else 1
+        overlap_scaled = CHECKPOINT_OVERLAP_SECONDS * unit_multiplier
+        resume_bound_scaled = checkpoint_scaled - overlap_scaled
+
+        min_allowed_scaled = (now_seconds - MAX_CATCHUP_SECONDS) * unit_multiplier
+
+        if resume_bound_scaled < min_allowed_scaled:
+            logger.warning(
+                f"Checkpoint is older than MAX_CATCHUP_SECONDS ({MAX_CATCHUP_SECONDS}s) - "
+                f"clamping catch-up window rather than resyncing the full gap. "
+                f"Increase MAX_CATCHUP_SECONDS if you need to backfill further."
+            )
+            query_start_bound_scaled = min_allowed_scaled
+        else:
+            query_start_bound_scaled = resume_bound_scaled
+
+        logger.info(
+            f"Resuming from checkpoint (last synced sample, minus a "
+            f"{CHECKPOINT_OVERLAP_SECONDS}s overlap margin)"
+        )
+    else:
+        query_start_bound_scaled = fallback_bound_seconds * 1000 if COLMI_TIMESTAMPS_ARE_MS else fallback_bound_seconds
+        logger.info(f"No checkpoint found - using QUERY_DURATION fallback ({QUERY_DURATION}s)")
 
     logger.debug(
         f"Querying from {query_start_bound_scaled} "
-        f"({'ms' if COLMI_TIMESTAMPS_ARE_MS else 's'} epoch, "
-        f"QUERY_DURATION={QUERY_DURATION}s)"
+        f"({'ms' if COLMI_TIMESTAMPS_ARE_MS else 's'} epoch)"
     )
 
     # Pull out device names
@@ -523,43 +630,44 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
     return results
 
 
-def write_results(results):
-    ''' Open a connection to InfluxDB and write the results in
+def write_results(results, client):
+    ''' Write results to InfluxDB using the given (already-open) client -
+    shared with the checkpoint lookup in extract_data() rather than
+    each opening its own connection.
     '''
     logger.debug(f"Writing {len(results)} point(s) tagged user={GADGETBRIDGE_USER!r}")
-    with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as _client:  # noqa: SIM117
-        with _client.write_api() as _write_client:
-            # Iterate through the results generating and writing points
-            for row in results:
-                p = Point(INFLUXDB_MEASUREMENT)
+    with client.write_api() as _write_client:
+        # Iterate through the results generating and writing points
+        for row in results:
+            p = Point(INFLUXDB_MEASUREMENT)
 
-                # Applied here, once, rather than threaded through every
-                # section above - guarantees every point gets a `user` tag
-                # with no risk of a section being missed. See the
-                # GADGETBRIDGE_USER comment in the config section for why
-                # this exists even in a single-user setup.
-                p = p.tag("user", GADGETBRIDGE_USER)
+            # Applied here, once, rather than threaded through every
+            # section above - guarantees every point gets a `user` tag
+            # with no risk of a section being missed. See the
+            # GADGETBRIDGE_USER comment in the config section for why
+            # this exists even in a single-user setup.
+            p = p.tag("user", GADGETBRIDGE_USER)
 
-                for tag in row['tags']:
-                    p = p.tag(tag, row['tags'][tag])
+            for tag in row['tags']:
+                p = p.tag(tag, row['tags'][tag])
 
-                for field in row['fields']:
-                    if row['fields'][field] == -1:
-                        continue
+            for field in row['fields']:
+                if row['fields'][field] == -1:
+                    continue
 
-                    # Skip any special heart_rate values (upstream noted
-                    # these show up as sentinel/error values on Huami gear;
-                    # kept as a safety net here too)
-                    if field == "heart_rate" and row['fields'][field] is not None and row['fields'][field] > 253:
-                        continue
+                # Skip any special heart_rate values (upstream noted
+                # these show up as sentinel/error values on Huami gear;
+                # kept as a safety net here too)
+                if field == "heart_rate" and row['fields'][field] is not None and row['fields'][field] > 253:
+                    continue
 
-                    if row['fields'][field] is None:
-                        continue
+                if row['fields'][field] is None:
+                    continue
 
-                    p = p.field(field, row['fields'][field])
+                p = p.field(field, row['fields'][field])
 
-                p = p.time(row['timestamp'])
-                _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
+            p = p.time(row['timestamp'])
+            _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
 
 
 if __name__ == "__main__":
@@ -581,14 +689,16 @@ if __name__ == "__main__":
     tempdir = fetch_database(webdav_client)
     conn, cur = open_database(tempdir)
 
-    # Extract data from the DB
-    results = extract_data(cur)
-    if not results:
-        logger.error("Data extraction failed")
-        sys.exit(1)
+    # One InfluxDB client, shared between the checkpoint lookup
+    # (extract_data) and the write (write_results) - opened once here
+    # rather than each opening its own connection.
+    with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as influx_client:
+        results = extract_data(cur, influx_client)
+        if not results:
+            logger.error("Data extraction failed")
+            sys.exit(1)
 
-    # Write out to InfluxDB
-    write_results(results)
+        write_results(results, influx_client)
 
     # Tidy up
     conn.close()

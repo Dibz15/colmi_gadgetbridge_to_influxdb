@@ -660,19 +660,15 @@
     },
     {
       "datasource": { "type": "influxdb", "uid": "influxdb-main" },
-      "description": "Single-row chronological view of sleep stages through the night - color of each block indicates which stage was active. Queries sleep_stage_active (1=start, 0=end, written as an explicit pair per segment by the parser) rather than the single-point-per-segment sleep_stage_duration_s used elsewhere - this is what makes the LAST segment of the night terminate at its actual known end time instead of running to the edge of the visible range: with only one point per segment, State Timeline has nothing to bound the final block against and extends it indefinitely, since it always draws to \"the next point,\" and the last segment has none. The end marker's value maps to an empty string, which is in turn mapped to a transparent color, so gaps read as blank rather than a fifth colored block. Every other column is explicitly dropped via keep(columns: [\"_time\", \"_value\"]) before group() - without that, every remaining tag column (device, user, sample_type, etc.) gets rendered as its own separate row by Grafana's Flux integration. Colors come from explicit value mappings (awake=orange, rem=purple, light=light-blue, deep=dark-blue) rather than palette-classic, which only differentiates between series, not values within one collapsed series. These mappings match by label string, so they're unaffected by SLEEP_STAGE_MAP recalibration. TWO THINGS WORTH KNOWING: (1) only sleep segments synced after the parser started writing sleep_stage_active exist in this field at all - anything synced before that will be invisible in this specific panel (still fine in the Sleep Stage Durations totals panel above, which uses the older field and isn't affected). (2) For back-to-back segments, one segment's end marker and the next segment's start marker land at the exact same nanosecond timestamp (contiguous sleep data) - untested whether Flux's sort() tie-breaking for equal timestamps could ever cause a visible flicker at a transition; if a boundary between stages ever looks wrong, this is the first thing to check.",
+      "description": "Sleep stages through the night - one row per stage, colored blocks show when each was active. Queries sleep_stage_active (1=start, 0=end, already independently confirmed correct against real data) grouped BY sleep_stage rather than collapsed into one row - the earlier single-row version's mistake was dropping the sleep_stage tag entirely via group() with no arguments, which threw away the very separation that makes each stage's own 0/1 transitions land correctly. With group(columns: [\"sleep_stage\"]) instead, each stage gets its own series/row, State Timeline colors each row differently via palette-classic (multiple rows means it finally has something to differentiate), and \"0\" is mapped to transparent so off-periods read as blank. Row order (deep/light/rem/awake bottom-to-top) still isn't controllable from this JSON - drag to reorder if needed. This is the third attempt at this panel; if it still doesn't render correctly, sleep_stage_now (a point written every 60 seconds per active minute, avoiding interpolation ambiguity entirely) is the verified fallback - swap the query's _field filter from sleep_stage_active to sleep_stage_now, drop the group(columns:[...]) back to a plain group(), and re-add keep(columns:[\"_time\",\"_value\"]) without the sleep_stage column.",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": { "mode": "palette-classic" },
           "mappings": [
             {
               "type": "value",
               "options": {
-                "awake": { "color": "orange", "index": 0 },
-                "rem": { "color": "purple", "index": 1 },
-                "light": { "color": "light-blue", "index": 2 },
-                "deep": { "color": "dark-blue", "index": 3 },
-                "": { "color": "transparent", "index": 4 }
+                "0": { "color": "transparent", "index": 0 }
               }
             }
           ],
@@ -680,7 +676,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 41 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 41 },
       "id": 503,
       "options": {
         "mergeValues": true,
@@ -692,7 +688,7 @@
       "targets": [
         {
           "datasource": { "type": "influxdb", "uid": "influxdb-main" },
-          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_active\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> map(fn: (r) => ({r with _value: if r._value == 1 then r.sleep_stage else \"\"}))\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> group()\n  |> sort(columns: [\"_time\"])",
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_active\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> keep(columns: [\"_time\", \"_value\", \"sleep_stage\"])\n  |> group(columns: [\"sleep_stage\"])\n  |> sort(columns: [\"_time\"])",
           "refId": "A"
         }
       ],

@@ -218,6 +218,30 @@ def raw_duration_to_seconds(raw_duration):
     return raw_duration
 
 
+def sleep_stage_minutes_to_nanos(raw_minutes):
+    ''' COLMI_SLEEP_STAGE_SAMPLE.DURATION is stored in MINUTES, not the
+    same raw unit as TIMESTAMP (ms) - confirmed with real data: observed
+    sleep_stage_active end markers landing 16-27 MILLISECONDS after
+    their start, when the underlying segments were real REM periods.
+    Reverse-engineering the gap gave raw values of 16-27, which only
+    makes sense as MINUTES (16-27 min is textbook-normal REM duration),
+    not milliseconds. Unlike TIMESTAMP, this does NOT depend on
+    COLMI_TIMESTAMPS_ARE_MS - it's a fixed minutes-to-nanoseconds
+    conversion regardless of that setting.
+    '''
+    return raw_minutes * 60 * 1_000_000_000
+
+
+def sleep_stage_minutes_to_seconds(raw_minutes):
+    ''' Same DURATION-is-minutes fact as sleep_stage_minutes_to_nanos(),
+    for the sleep_stage_duration_s / {stage}_sleep_duration_s FIELD
+    values themselves - these were previously storing the raw minute
+    count directly into a field named "_duration_s" (implying seconds),
+    unconverted.
+    '''
+    return raw_minutes * 60
+
+
 def scaled_to_iso(ts_scaled) -> str:
     ''' Converts a "scaled" timestamp (whatever unit COLMI_TIMESTAMPS_ARE_MS
     says the local export/query bound uses - ms or s) into a readable
@@ -660,7 +684,9 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
                     "sleep_stage_raw": r[3]
                 }
 
-                # Start marker - existing duration fields, plus a
+                # Start marker - existing duration fields (converted to
+                # real seconds - DURATION is minutes, see
+                # sleep_stage_minutes_to_seconds()), plus a
                 # sleep_stage_active state field (1=active) for the
                 # Grafana Sleep Stage Timeline panel. Without an
                 # explicit "this segment ends here" signal, Grafana's
@@ -669,11 +695,12 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
                 # recurs a few times a night rendered as one solid
                 # block from its first to its last occurrence, silently
                 # swallowing every other stage's blocks in between.
+                duration_seconds = sleep_stage_minutes_to_seconds(r[2])
                 results.append({
                     "timestamp": row_ts,
                     "fields": {
-                        "sleep_stage_duration_s": r[2],
-                        f"{stage_label}_sleep_duration_s": r[2],
+                        "sleep_stage_duration_s": duration_seconds,
+                        f"{stage_label}_sleep_duration_s": duration_seconds,
                         "sleep_stage_active": 1,
                     },
                     "tags": common_tags,
@@ -683,15 +710,24 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
                 # interpreted as "this series' value changed" by
                 # State Timeline, ending the block at the right place
                 # instead of extending it to this stage's next
-                # occurrence. Reuses to_nanos() to convert the raw
-                # DURATION value the same way TIMESTAMP is converted -
-                # this assumes DURATION uses the same raw unit
-                # convention as TIMESTAMP (confirmed ms), which hasn't
-                # been independently verified the way TIMESTAMP's unit
-                # was. If blocks in the rendered panel look implausible
-                # (real sleep stage segments typically run 10-90+ min),
-                # that's the signal this assumption is wrong.
-                end_ts = row_ts + to_nanos(r[2])
+                # occurrence. Uses sleep_stage_minutes_to_nanos() -
+                # DURATION is in minutes, confirmed with real data (see
+                # that function's docstring) - NOT the same raw unit as
+                # TIMESTAMP the way an earlier version of this code
+                # assumed.
+                #
+                # Placed 1 SECOND BEFORE the precise computed end,
+                # deliberately - since sleep stages are contiguous, one
+                # segment's true end exactly equals the next segment's
+                # true start, and two points at the identical
+                # nanosecond leaves their relative order in a Grafana
+                # query's sort() undefined. Ending 1s early guarantees
+                # this marker always sorts strictly before the next
+                # segment's start marker, no matter what - the 1s
+                # visual shortfall is imperceptible at normal dashboard
+                # zoom, but removes an entire class of ambiguous
+                # rendering behaviour at every stage transition.
+                end_ts = row_ts + sleep_stage_minutes_to_nanos(r[2]) - 1_000_000_000
                 results.append({
                     "timestamp": end_ts,
                     "fields": {

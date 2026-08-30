@@ -112,10 +112,10 @@ COLMI_TIMESTAMPS_ARE_MS = os.getenv("COLMI_TIMESTAMPS_ARE_MS", "Y") == "Y"
 # Unknown values fall through as "stage_<n>" so nothing is silently
 # dropped while you calibrate this.
 SLEEP_STAGE_MAP = {
-    1: "light",
-    2: "deep",
-    3: "rem",
-    4: "awake",
+    2: "light",
+    3: "deep",
+    4: "rem",
+    1: "awake",
 }
 
 ### Config ends

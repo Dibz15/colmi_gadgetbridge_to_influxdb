@@ -16,6 +16,7 @@ RUN pip install --upgrade pip \
     && pip install webdavclient3 influxdb-client loguru
 
 COPY app /app
+COPY scripts /scripts
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /app/gadgetbridge_to_influxdb.py /entrypoint.sh
 

@@ -38,6 +38,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from influxdb_client import InfluxDBClient, Point
@@ -190,6 +191,16 @@ def from_nanos(ns):
     return ns // 1000000000
 
 
+def scaled_to_iso(ts_scaled) -> str:
+    ''' Converts a "scaled" timestamp (whatever unit COLMI_TIMESTAMPS_ARE_MS
+    says the local export/query bound uses - ms or s) into a readable
+    UTC ISO 8601 string, purely for logging. Never used for the actual
+    query itself, which stays in raw scaled units throughout.
+    '''
+    seconds = ts_scaled / 1000 if COLMI_TIMESTAMPS_ARE_MS else ts_scaled
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+
+
 def get_last_checkpoint_ns(client) -> int | None:
     ''' Queries InfluxDB for the most recent `last_seen` value from our
     own sync_check points, so a run can resume from there instead of
@@ -313,25 +324,31 @@ def extract_data(cur, client):
 
         if resume_bound_scaled < min_allowed_scaled:
             logger.warning(
-                f"Checkpoint is older than MAX_CATCHUP_SECONDS ({MAX_CATCHUP_SECONDS}s) - "
-                f"clamping catch-up window rather than resyncing the full gap. "
-                f"Increase MAX_CATCHUP_SECONDS if you need to backfill further."
+                f"Checkpoint ({scaled_to_iso(checkpoint_scaled)}) is older than "
+                f"MAX_CATCHUP_SECONDS ({MAX_CATCHUP_SECONDS}s) - clamping catch-up "
+                f"window to {scaled_to_iso(min_allowed_scaled)} rather than resyncing "
+                f"the full gap. Increase MAX_CATCHUP_SECONDS if you need to backfill further."
             )
             query_start_bound_scaled = min_allowed_scaled
         else:
             query_start_bound_scaled = resume_bound_scaled
 
         logger.info(
-            f"Resuming from checkpoint (last synced sample, minus a "
-            f"{CHECKPOINT_OVERLAP_SECONDS}s overlap margin)"
+            f"Resuming from checkpoint at {scaled_to_iso(checkpoint_scaled)} "
+            f"(last synced sample) - querying from {scaled_to_iso(query_start_bound_scaled)} "
+            f"after subtracting a {CHECKPOINT_OVERLAP_SECONDS}s overlap margin"
         )
     else:
         query_start_bound_scaled = fallback_bound_seconds * 1000 if COLMI_TIMESTAMPS_ARE_MS else fallback_bound_seconds
-        logger.info(f"No checkpoint found - using QUERY_DURATION fallback ({QUERY_DURATION}s)")
+        logger.info(
+            f"No checkpoint found - using QUERY_DURATION fallback ({QUERY_DURATION}s), "
+            f"querying from {scaled_to_iso(query_start_bound_scaled)}"
+        )
 
     logger.debug(
         f"Querying from {query_start_bound_scaled} "
-        f"({'ms' if COLMI_TIMESTAMPS_ARE_MS else 's'} epoch)"
+        f"({'ms' if COLMI_TIMESTAMPS_ARE_MS else 's'} epoch, "
+        f"{scaled_to_iso(query_start_bound_scaled)} UTC)"
     )
 
     # Pull out device names

@@ -52,7 +52,17 @@ CREATE TABLE IF NOT EXISTS keyword_rules (
     tag         TEXT NOT NULL,
     category    TEXT NOT NULL,
     priority    INTEGER NOT NULL DEFAULT 0,
-    enabled     INTEGER NOT NULL DEFAULT 1
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    -- When 1 (default, matches original behaviour): this rule competes
+    -- for its category's single slot - if it matches, and no earlier
+    -- (lower-priority-number) exclusive rule in the same category has
+    -- already matched, its tag wins that category and any other
+    -- exclusive rule in the same category is skipped.
+    -- When 0: this rule's tag is added unconditionally whenever it
+    -- matches, regardless of what else matched in its category -
+    -- lets two rules "stack" onto the same event instead of fighting
+    -- for one slot. See classify_event() in ics_sync.py.
+    exclusive   INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS tag_definitions (

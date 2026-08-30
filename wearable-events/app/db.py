@@ -40,6 +40,7 @@ def init_db():
     with get_conn() as conn:
         conn.executescript(_SCHEMA_PATH.read_text())
         _ensure_column(conn, "calendar_events_cache", "manually_tagged", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "keyword_rules", "exclusive", "INTEGER NOT NULL DEFAULT 1")
     logger.info(f"Initialized config db at {SQLITE_PATH}")
 
 
@@ -209,13 +210,13 @@ def list_keyword_rules(user_id: int, enabled_only: bool = False):
 
 def add_keyword_rule(user_id: int, keyword: str, tag: str, category: str, *,
                       is_regex: bool = False, match_field: str = "title",
-                      priority: int = 0, enabled: bool = True):
+                      priority: int = 0, enabled: bool = True, exclusive: bool = True):
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO keyword_rules
-               (user_id, keyword, is_regex, match_field, tag, category, priority, enabled)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, keyword, int(is_regex), match_field, tag, category, priority, int(enabled))
+               (user_id, keyword, is_regex, match_field, tag, category, priority, enabled, exclusive)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, keyword, int(is_regex), match_field, tag, category, priority, int(enabled), int(exclusive))
         )
         return cur.lastrowid
 

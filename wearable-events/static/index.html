@@ -41,6 +41,7 @@
     <div id="tag-buttons" class="button-grid">
       <p class="muted">Loading...</p>
     </div>
+    <div id="duration-picker" class="duration-picker" style="display:none"></div>
     <div class="custom-tag-row">
       <input type="text" id="custom-tag-input" placeholder="Custom tag...">
       <button id="custom-tag-submit">Log</button>
@@ -114,6 +115,10 @@
       </select>
       <input type="text" id="rule-tag" placeholder="Tag to apply (e.g. meeting)">
       <input type="number" id="rule-priority" placeholder="Priority (lower = evaluated first)" value="0">
+      <label class="inline-check">
+        <input type="checkbox" id="rule-exclusive" checked>
+        Exclusive within category (uncheck to let this tag stack alongside another match instead of competing for one slot)
+      </label>
       <button id="rule-add-draft">Add to draft</button>
     </details>
     <button id="rule-save-batch" disabled style="margin-top:1rem;width:100%">Save changes</button>

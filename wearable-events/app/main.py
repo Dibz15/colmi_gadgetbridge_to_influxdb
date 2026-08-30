@@ -85,6 +85,7 @@ class ManualEventUpdateIn(BaseModel):
     '''
     tags: list[str] | None = None
     timestamp: str | None = None  # ISO 8601
+    duration_min: int | None = None
 
 
 class CalendarEventTagsIn(BaseModel):
@@ -117,6 +118,7 @@ class KeywordRuleIn(BaseModel):
     match_field: str = "title"  # 'title' | 'description'
     priority: int = 0
     enabled: bool = True
+    exclusive: bool = True  # False = "stack" this tag rather than compete for its category's one slot
 
 
 class TagDefinitionIn(BaseModel):
@@ -244,11 +246,18 @@ def post_event(payload: ManualEventIn, current_user: dict = Depends(get_current_
 
 @app.patch("/events/{event_id}")
 def patch_event(event_id: str, payload: ManualEventUpdateIn, current_user: dict = Depends(get_current_user)):
-    ''' Edit a manual event's tags and/or timestamp. At least one of the
-    two must be provided. Unset fields keep their current value.
+    ''' Edit a manual event's tags, timestamp, and/or duration. At least
+    one field must be provided. Unset fields keep their current value.
+
+    duration_min is how the Tags tab's start/stop timer for
+    is_duration-flagged buttons gets its final value: the tap that
+    starts the timer POSTs the event with no duration, and the tap that
+    stops it PATCHes duration_min in here once elapsed time is known.
+    It's also editable directly, as a manual correction/safety net for
+    a timer that got orphaned (e.g. the tab was closed mid-timer).
     '''
-    if payload.tags is None and payload.timestamp is None:
-        raise HTTPException(400, "provide at least one of: tags, timestamp")
+    if payload.tags is None and payload.timestamp is None and payload.duration_min is None:
+        raise HTTPException(400, "provide at least one of: tags, timestamp, duration_min")
 
     username = current_user["username"]
     existing = find_manual_event_by_id(username, event_id)
@@ -259,6 +268,8 @@ def patch_event(event_id: str, payload: ManualEventUpdateIn, current_user: dict 
     old_timestamp = existing["timestamp"]
 
     new_tags = set(payload.tags) if payload.tags is not None else old_tags
+    new_duration_min = payload.duration_min if payload.duration_min is not None else existing["duration_min"]
+
     if payload.timestamp is not None:
         try:
             new_timestamp = datetime.fromisoformat(payload.timestamp)
@@ -277,7 +288,10 @@ def patch_event(event_id: str, payload: ManualEventUpdateIn, current_user: dict 
     # If the timestamp is moving, every old point (all old tags) needs
     # deleting from the old timestamp - a partial tag diff doesn't make
     # sense once the point in time itself has changed. If the timestamp
-    # is unchanged, only delete the tags actually being removed.
+    # is unchanged, only delete the tags actually being removed. Note a
+    # duration_min-only change (same tags, same timestamp) still needs
+    # a full rewrite below since duration_min lives on every point for
+    # this event_id - but nothing needs deleting first in that case.
     tags_to_delete = old_tags if timestamp_changed else (old_tags - new_tags)
     for tag in tags_to_delete:
         try:
@@ -291,10 +305,15 @@ def patch_event(event_id: str, payload: ManualEventUpdateIn, current_user: dict 
         source="manual",
         timestamp=new_timestamp,
         event_id=event_id,
-        duration_min=existing["duration_min"],
+        duration_min=new_duration_min,
     )
 
-    return {"event_id": event_id, "tags": sorted(new_tags), "timestamp": new_timestamp.isoformat()}
+    return {
+        "event_id": event_id,
+        "tags": sorted(new_tags),
+        "timestamp": new_timestamp.isoformat(),
+        "duration_min": new_duration_min,
+    }
 
 
 @app.delete("/events/{event_id}")
@@ -570,7 +589,7 @@ def save_keyword_rules_batch(payload: KeywordRuleBatchIn, current_user: dict = D
         db.add_keyword_rule(
             user_id, rule.keyword, rule.tag, rule.category,
             is_regex=rule.is_regex, match_field=rule.match_field,
-            priority=rule.priority, enabled=rule.enabled,
+            priority=rule.priority, enabled=rule.enabled, exclusive=rule.exclusive,
         )
 
     new_rules = db.list_keyword_rules(user_id, enabled_only=True)

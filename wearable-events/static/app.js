@@ -34,6 +34,12 @@ async function api(path, options = {}) {
 }
 
 // --- Tags tab ---
+// --- Duration-tag entry ---
+// Simple, stateless: tap the button, pick or type a duration, log
+// immediately with that duration_min. No running timer, nothing that
+// can be lost by closing the tab mid-activity.
+const DURATION_QUICKPICKS = [5, 10, 15, 30, 60, 90];
+
 async function loadTagButtons() {
   const container = document.getElementById("tag-buttons");
   try {
@@ -47,7 +53,11 @@ async function loadTagButtons() {
       const btn = document.createElement("button");
       btn.className = "tag-btn";
       btn.textContent = def.label;
-      btn.addEventListener("click", () => logTag(def.tag, btn));
+      if (def.is_duration) {
+        btn.addEventListener("click", () => openDurationPicker(def.tag, def.label));
+      } else {
+        btn.addEventListener("click", () => logTag(def.tag, btn));
+      }
       container.appendChild(btn);
     });
   } catch (e) {
@@ -66,6 +76,62 @@ async function logTag(tag, btnEl) {
     status.textContent = `Logged "${tag}"`;
   } catch (e) {
     status.textContent = `Error: ${e.message}`;
+  }
+}
+
+function closeDurationPicker() {
+  const picker = document.getElementById("duration-picker");
+  picker.style.display = "none";
+  picker.innerHTML = "";
+}
+
+function openDurationPicker(tag, label) {
+  const picker = document.getElementById("duration-picker");
+  picker.style.display = "block";
+  picker.innerHTML = `
+    <p class="section-label duration-picker-title">${label} - how long?</p>
+    <div class="duration-quickpicks">
+      ${DURATION_QUICKPICKS.map(m => `<button class="small-btn duration-quickpick" data-min="${m}">${m}m</button>`).join("")}
+    </div>
+    <div class="duration-custom-row">
+      <input type="number" min="1" id="duration-custom-input" placeholder="Custom minutes">
+      <button class="small-btn" id="duration-confirm-btn">Log</button>
+      <button class="small-btn" id="duration-cancel-btn">Cancel</button>
+    </div>
+  `;
+
+  picker.querySelectorAll(".duration-quickpick").forEach(qb => {
+    qb.addEventListener("click", () => logDurationTag(tag, label, parseInt(qb.dataset.min, 10)));
+  });
+
+  const customInput = document.getElementById("duration-custom-input");
+  document.getElementById("duration-confirm-btn").addEventListener("click", () => {
+    const minutes = parseInt(customInput.value, 10);
+    if (!minutes || minutes <= 0) {
+      customInput.focus();
+      return;
+    }
+    logDurationTag(tag, label, minutes);
+  });
+  customInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("duration-confirm-btn").click();
+  });
+
+  document.getElementById("duration-cancel-btn").addEventListener("click", closeDurationPicker);
+
+  customInput.focus();
+}
+
+async function logDurationTag(tag, label, minutes) {
+  const status = document.getElementById("tags-status");
+  status.textContent = `Logging "${label}"...`;
+  try {
+    await api("/events", { method: "POST", body: JSON.stringify({ tags: [tag], duration_min: minutes }) });
+    status.textContent = `Logged "${label}" for ${minutes}min`;
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+  } finally {
+    closeDurationPicker();
   }
 }
 
@@ -186,13 +252,14 @@ function renderRuleList() {
 
   committedRules.forEach(rule => {
     const fieldNote = rule.is_regex ? `regex on ${rule.match_field}` : `contains, on ${rule.match_field}`;
+    const exclusiveNote = rule.exclusive === undefined ? " · exclusivity unknown (old rule row?)" : (!rule.exclusive ? " · stacks (non-exclusive)" : "");
     const marked = rule._markedForDeletion;
     const row = document.createElement("div");
     row.className = "list-row" + (marked ? " marked-deleted" : "");
     row.innerHTML = `
       <div>
         <div class="row-title">"${rule.keyword}" → <strong>${rule.tag}</strong></div>
-        <div class="row-meta">${rule.category} · priority ${rule.priority} · ${fieldNote}${marked ? " · marked for deletion" : ""}</div>
+        <div class="row-meta">${rule.category} · priority ${rule.priority} · ${fieldNote}${exclusiveNote}${marked ? " · marked for deletion" : ""}</div>
       </div>
       <button class="small-btn ${marked ? "" : "danger"}">${marked ? "Undo" : "Delete"}</button>
     `;
@@ -205,12 +272,13 @@ function renderRuleList() {
 
   pendingNewRules.forEach((rule, idx) => {
     const fieldNote = rule.is_regex ? `regex on ${rule.match_field}` : `contains, on ${rule.match_field}`;
+    const exclusiveNote = rule.exclusive === undefined ? " · exclusivity unknown (old rule row?)" : (!rule.exclusive ? " · stacks (non-exclusive)" : "");
     const row = document.createElement("div");
     row.className = "list-row pending-new";
     row.innerHTML = `
       <div>
         <div class="row-title">"${rule.keyword}" → <strong>${rule.tag}</strong></div>
-        <div class="row-meta">${rule.category} · priority ${rule.priority} · ${fieldNote} · pending</div>
+        <div class="row-meta">${rule.category} · priority ${rule.priority} · ${fieldNote}${exclusiveNote} · pending</div>
       </div>
       <button class="small-btn danger">Remove</button>
     `;
@@ -249,6 +317,7 @@ document.getElementById("rule-add-draft").addEventListener("click", () => {
   const match_field = document.getElementById("rule-match-field").value;
   const is_regex = document.getElementById("rule-is-regex").checked;
   const priority = parseInt(document.getElementById("rule-priority").value, 10) || 0;
+  const exclusive = document.getElementById("rule-exclusive").checked;
   const status = document.getElementById("rule-status");
 
   if (!keyword || !tag) {
@@ -256,11 +325,16 @@ document.getElementById("rule-add-draft").addEventListener("click", () => {
     return;
   }
 
-  pendingNewRules.push({ keyword, tag, category, match_field, is_regex, priority, enabled: true });
+  pendingNewRules.push({ keyword, tag, category, match_field, is_regex, priority, exclusive, enabled: true });
   document.getElementById("rule-keyword").value = "";
   document.getElementById("rule-tag").value = "";
   document.getElementById("rule-priority").value = "0";
   document.getElementById("rule-is-regex").checked = false;
+  // Deliberately NOT resetting rule-exclusive here - it used to silently
+  // flip back to checked after every add, which could leave a rule
+  // exclusive when the person believed they'd already unchecked it for
+  // this session. Leaving it as the person last set it is more
+  // predictable when adding several related rules in a row.
   status.textContent = "Added to draft - not saved yet";
   renderRuleList();
 });
@@ -476,7 +550,12 @@ function renderTimelineEditForm(entry) {
   `).join("");
 
   const timeFieldHtml = entry.kind === "manual"
-    ? `<input type="datetime-local" class="timeline-edit-datetime" value="${isoToDatetimeLocalValue(entry.timestamp)}">`
+    ? `<label class="timeline-edit-label">Time
+         <input type="datetime-local" class="timeline-edit-datetime" value="${isoToDatetimeLocalValue(entry.timestamp)}">
+       </label>
+       <label class="timeline-edit-label">Duration (minutes)
+         <input type="number" min="0" class="timeline-edit-duration" value="${entry.duration_min ?? ""}" placeholder="none">
+       </label>`
     : `<p class="muted small-note">Time and title come from the calendar feed and can't be edited here - only tags.</p>`;
 
   const deleteBtnHtml = entry.kind === "manual"
@@ -540,9 +619,12 @@ function wireTimelineEditForm(row, entry) {
     try {
       if (entry.kind === "manual") {
         const timeInput = form.querySelector(".timeline-edit-datetime");
+        const durationInput = form.querySelector(".timeline-edit-duration");
         const body = { tags: draftTags };
         const newIso = datetimeLocalValueToIso(timeInput.value);
         if (newIso !== entry.timestamp) body.timestamp = newIso;
+        const newDuration = durationInput.value === "" ? null : parseInt(durationInput.value, 10);
+        if (newDuration !== null && newDuration !== entry.duration_min) body.duration_min = newDuration;
         await api(`/events/${entry.event_id}`, { method: "PATCH", body: JSON.stringify(body) });
       } else {
         await api(`/calendar_events/${entry.event_id}/tags`, {

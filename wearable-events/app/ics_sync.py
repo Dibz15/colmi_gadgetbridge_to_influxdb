@@ -25,24 +25,39 @@ def _to_utc_datetime(dt_value) -> datetime:
 
 
 def classify_event(title: str, description: str, rules: list[dict], default_tag: str) -> list[str]:
-    ''' Apply keyword_rules per spec §5:
+    ''' Apply keyword_rules per spec §5, extended with a per-rule
+    `exclusive` flag:
       - group enabled rules by category
-      - within a category, first match wins by ascending priority
-        (rules list is already sorted category, priority by db.list_keyword_rules)
-      - across categories, all surviving tags combine
-      - if no 'context' rule matches, fall back to default_tag
+      - within a category, EXCLUSIVE rules (the default, matching
+        original behaviour) compete for one slot: first match wins by
+        ascending priority, and any other exclusive rule in the same
+        category is skipped once a winner is found
+      - NON-exclusive rules (exclusive=0) don't compete for that slot -
+        if they match, their tag is added unconditionally, alongside
+        whatever else matched in their category or any other. This is
+        the escape hatch for "I want both tags when both rules match",
+        without changing the default behaviour for existing rules.
+      - across categories, all surviving tags combine (unchanged)
+      - if no EXCLUSIVE 'context' rule matches, fall back to default_tag
+        (a non-exclusive context-category rule matching doesn't count
+        as "context is covered" - the fallback still applies, since
+        exclusive and non-exclusive rules are answering different
+        questions: "what's the one context" vs "what extra tag applies")
       - other categories contribute nothing if nothing matches
     '''
     title = title or ""
     description = description or ""
 
     matched_by_category: dict[str, str] = {}
+    extra_tags: list[str] = []
 
     for rule in rules:
         category = rule["category"]
-        if category in matched_by_category:
-            # Already have a winner for this category (rules are
-            # pre-sorted by priority ascending, so the first hit wins)
+        is_exclusive = bool(rule.get("exclusive", True))
+
+        if is_exclusive and category in matched_by_category:
+            # Already have an exclusive winner for this category (rules
+            # are pre-sorted by priority ascending, so the first hit wins)
             continue
 
         haystack = title if rule["match_field"] == "title" else description
@@ -52,13 +67,26 @@ def classify_event(title: str, description: str, rules: list[dict], default_tag:
         else:
             hit = rule["keyword"].lower() in haystack.lower()
 
-        if hit:
+        if not hit:
+            continue
+
+        if is_exclusive:
             matched_by_category[category] = rule["tag"]
+        else:
+            extra_tags.append(rule["tag"])
 
     if "context" not in matched_by_category:
         matched_by_category["context"] = default_tag
 
-    return list(matched_by_category.values())
+    # Dedupe while keeping a stable order: exclusive-category winners
+    # first, then non-exclusive extras, dropping any extra tag that
+    # already showed up as a category winner.
+    result = list(matched_by_category.values())
+    for tag in extra_tags:
+        if tag not in result:
+            result.append(tag)
+
+    return result
 
 
 def sync_calendar(calendar: dict, rules: list[dict], username: str):

@@ -117,10 +117,10 @@ COLMI_TIMESTAMPS_ARE_MS = os.getenv("COLMI_TIMESTAMPS_ARE_MS", "Y") == "Y"
 # Unknown values fall through as "stage_<n>" so nothing is silently
 # dropped while you calibrate this.
 SLEEP_STAGE_MAP = {
-    2: "light",
-    3: "deep",
-    4: "rem",
-    1: "awake",
+    1: "light",
+    2: "deep",
+    3: "rem",
+    4: "awake",
 }
 
 # Safety cap on catch-up distance if the checkpoint turns out to be
@@ -189,6 +189,33 @@ def from_nanos(ns):
     if COLMI_TIMESTAMPS_ARE_MS:
         return ns // 1000000
     return ns // 1000000000
+
+
+def raw_duration_to_seconds(raw_duration):
+    ''' Converts a DIFFERENCE between two raw COLMI_* TIMESTAMP values
+    (e.g. WAKEUP_TIME - TIMESTAMP) into actual seconds, honouring
+    COLMI_TIMESTAMPS_ARE_MS. Distinct from to_nanos()/from_nanos()
+    (which convert an absolute epoch timestamp) - a duration just needs
+    dividing by the raw unit's scale, not a full nanosecond conversion.
+
+    Returns an int, not a float - InfluxDB locks a field's type on
+    first write (this field was originally written as an integer via
+    plain int subtraction), and a later write of a float to the same
+    field name is a hard type conflict InfluxDB rejects outright, not
+    something it silently coerces. round() rather than // for slightly
+    better accuracy if a duration isn't an exact multiple of 1000ms,
+    while still guaranteeing an int return type either way.
+
+    Bug this exists to fix: sleep_session_duration_s was previously
+    computed as a raw millisecond difference (WAKEUP_TIME - TIMESTAMP,
+    both ms) but stored/labelled as if it were already seconds -
+    Grafana's "s" unit formatter then displayed an 8.5-hour sleep
+    session as "50.8 weeks" (30,600,000 misread as 30,600,000 seconds
+    instead of milliseconds).
+    '''
+    if COLMI_TIMESTAMPS_ARE_MS:
+        return round(raw_duration / 1000)
+    return raw_duration
 
 
 def scaled_to_iso(ts_scaled) -> str:
@@ -605,7 +632,7 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
                 fields = {"sleep_session_start" : r[0]}
                 if r[2] is not None:
                     fields["sleep_session_wakeup"] = r[2]
-                    fields["sleep_session_duration_s"] = r[2] - r[0]
+                    fields["sleep_session_duration_s"] = raw_duration_to_seconds(r[2] - r[0])
                 row = {
                     "timestamp": row_ts,
                     "fields" : fields,
@@ -653,6 +680,7 @@ def write_results(results, client):
     each opening its own connection.
     '''
     logger.debug(f"Writing {len(results)} point(s) tagged user={GADGETBRIDGE_USER!r}")
+    write_failures = 0
     with client.write_api() as _write_client:
         # Iterate through the results generating and writing points
         for row in results:
@@ -684,7 +712,24 @@ def write_results(results, client):
                 p = p.field(field, row['fields'][field])
 
             p = p.time(row['timestamp'])
-            _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
+
+            # A single point's write can fail for reasons unrelated to
+            # every other point - most notably an InfluxDB field-type
+            # conflict (a field's type is locked on first write; a
+            # later point sending a different Python type for the same
+            # field name, e.g. float vs the field's established int, is
+            # rejected outright, not coerced). Without this try/except,
+            # one such conflict crashes the whole sync run and no
+            # further points get written at all - logging and
+            # continuing means the rest of this run's data still lands.
+            try:
+                _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
+            except Exception as e:
+                write_failures += 1
+                logger.warning(f"Failed to write point (tags={row['tags']}, timestamp={row['timestamp']}): {e}")
+
+    if write_failures:
+        logger.warning(f"{write_failures} of {len(results)} point(s) failed to write this run - see warnings above for details")
 
 
 if __name__ == "__main__":

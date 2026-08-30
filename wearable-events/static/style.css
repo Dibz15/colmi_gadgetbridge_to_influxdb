@@ -120,6 +120,19 @@ main {
   color: var(--muted);
 }
 
+.field-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.6rem;
+}
+
+.field-label input {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+}
+
 .custom-tag-row {
   display: flex;
   gap: 0.5rem;

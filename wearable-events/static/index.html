@@ -114,7 +114,9 @@
         <option value="restful">restful</option>
       </select>
       <input type="text" id="rule-tag" placeholder="Tag to apply (e.g. meeting)">
-      <input type="number" id="rule-priority" placeholder="Priority (lower = evaluated first)" value="0">
+      <label class="field-label">Priority (lower = evaluated first, only matters between exclusive rules)
+        <input type="number" id="rule-priority" placeholder="0" value="0">
+      </label>
       <label class="inline-check">
         <input type="checkbox" id="rule-exclusive" checked>
         Exclusive within category (uncheck to let this tag stack alongside another match instead of competing for one slot)
@@ -140,7 +142,9 @@
         <option value="meta">meta</option>
       </select>
       <label class="inline-check"><input type="checkbox" id="tagdef-is-duration"> Start/stop duration tag</label>
-      <input type="number" id="tagdef-sort-order" placeholder="Sort order" value="0">
+      <label class="field-label">Sort order (controls button position on the Tags tab, lower = shown first)
+        <input type="number" id="tagdef-sort-order" placeholder="0" value="0">
+      </label>
       <button id="tagdef-add-submit">Add button</button>
     </details>
     <p id="tagdef-status" class="status"></p>

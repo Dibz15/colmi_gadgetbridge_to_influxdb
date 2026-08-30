@@ -660,7 +660,7 @@
     },
     {
       "datasource": { "type": "influxdb", "uid": "influxdb-main" },
-      "description": "Sleep stages through the night - one row per stage, colored blocks show when each was active. Queries sleep_stage_active (1=start, 0=end, already independently confirmed correct against real data) grouped BY sleep_stage rather than collapsed into one row - the earlier single-row version's mistake was dropping the sleep_stage tag entirely via group() with no arguments, which threw away the very separation that makes each stage's own 0/1 transitions land correctly. With group(columns: [\"sleep_stage\"]) instead, each stage gets its own series/row, State Timeline colors each row differently via palette-classic (multiple rows means it finally has something to differentiate), and \"0\" is mapped to transparent so off-periods read as blank. Row order (deep/light/rem/awake bottom-to-top) still isn't controllable from this JSON - drag to reorder if needed. This is the third attempt at this panel; if it still doesn't render correctly, sleep_stage_now (a point written every 60 seconds per active minute, avoiding interpolation ambiguity entirely) is the verified fallback - swap the query's _field filter from sleep_stage_active to sleep_stage_now, drop the group(columns:[...]) back to a plain group(), and re-add keep(columns:[\"_time\",\"_value\"]) without the sleep_stage column.",
+      "description": "Sleep stages through the night - one row per stage, colored blocks show when each was active. Queries sleep_stage_active (1=start, 0=end, already independently confirmed correct against real data), reshaped from long to wide format via pivot(rowKey: [\"_time\"], columnKey: [\"sleep_stage\"], valueColumn: \"_value\") - each stage becomes its own named column/field rather than a separate grouped table, which is a more natively-supported Grafana data shape than the long-format table tricks earlier versions of this panel relied on (a union() of four separately-filtered per-stage series, before that a single collapsed row, before that per-segment sparse markers with no explicit end - see prior edits to this file for what didn't work and why, if this ever needs revisiting). Row order is set explicitly via the panel's own \"organize fields by name\" transformation (indexByName), rather than left to whatever order the query happens to return columns in - deep/light/rem/awake, intended bottom-to-top per the classic hypnogram convention. \"0\" is mapped to transparent so each stage's own off-periods (its end marker) read as blank rather than a visible block; palette-classic auto-colors each row differently. GENUINELY UNVERIFIED: whether index 0 renders as the top row or the bottom row for a State Timeline panel - if the stacking comes out backwards, just reverse the indexByName numbers (swap deep/awake and light/rem).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -688,8 +688,25 @@
       "targets": [
         {
           "datasource": { "type": "influxdb", "uid": "influxdb-main" },
-          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_active\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> keep(columns: [\"_time\", \"_value\", \"sleep_stage\"])\n  |> group(columns: [\"sleep_stage\"])\n  |> sort(columns: [\"_time\"])",
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_active\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> keep(columns: [\"_time\", \"_value\", \"sleep_stage\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"sleep_stage\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])",
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {},
+            "indexByName": {
+              "_time": 0,
+              "deep": 4,
+              "light": 3,
+              "rem": 2,
+              "awake": 1
+            },
+            "renameByName": {}
+          }
         }
       ],
       "title": "Sleep Stage Timeline",

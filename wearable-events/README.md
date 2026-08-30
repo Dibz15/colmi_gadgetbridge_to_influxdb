@@ -140,7 +140,9 @@ each synced event's raw title/description/timing locally, keyed by the
 same `event_id` written to InfluxDB, so keyword rule changes can be
 reclassified against everything ever synced without depending on the ICS
 feed still exposing old events (most feeds are a rolling window, not a
-full archive).
+full archive). It also carries `manually_tagged`, used by the Timeline
+UI's tag-editing feature — see [Manual tag overrides](#manual-tag-overrides-timeline-ui-editing)
+below.
 
 ## API reference
 
@@ -156,7 +158,15 @@ cookie (`Depends(get_current_user)` → `401` if missing/invalid).
 | POST | `/users` | Add a household member |
 | GET | `/unclaimed_ring_users` | Sensor `user` tag values not yet claimed by an account |
 | POST | `/events` | Log a manual tag |
+| PATCH | `/events/{event_id}` | Edit a manual event's tags (full replacement) and/or timestamp |
+| DELETE | `/events/{event_id}` | Delete a manual event entirely |
+| GET | `/timeline` | Read-only merged view of calendar + manual events for a date range |
+| PATCH | `/calendar_events/{event_id}/tags` | Manually override a calendar-derived event's tags; marks it `manually_tagged` so future syncs/reprocess leave it alone |
+| POST | `/calendar_events/{event_id}/reset_tags` | Undo a manual override - reclassify against current rules and clear `manually_tagged` |
 | POST | `/sleep` | Submit a 1–5 sleep score, resolved against the most recent completed sleep session |
+| GET | `/sleep` | Read-only history of past sleep entries (default: last 30 days) |
+| PATCH | `/sleep/{sleep_date}` | Edit an existing night's score/qualifiers |
+| DELETE | `/sleep/{sleep_date}` | Delete a sleep entry |
 | GET / POST | `/calendars` | List / add an ICS calendar feed |
 | PATCH / DELETE | `/calendars/{id}` | Update / remove a calendar |
 | POST | `/calendars/{id}/sync` | Manually trigger a sync for one calendar |
@@ -180,6 +190,32 @@ Applied per calendar event (`app/ics_sync.py::classify_event`):
 4. If no `context` rule matches, the calendar's `default_tag` is used as
    a fallback — every event ends up with at least one context tag.
 5. Other categories contribute nothing if nothing matches (no fallback).
+
+## Manual tag overrides (Timeline UI editing)
+
+Both manual events and calendar-derived events can have their tags
+edited from the Timeline tab. The two work differently under the hood:
+
+- **Manual events** are just deleted-and-rewritten in InfluxDB (same
+  `delete_event_tag_point` + `write_event_points` pattern used
+  everywhere else in this app). No SQLite involvement, no ongoing state.
+- **Calendar events** are trickier, because they're normally
+  re-classified by keyword rules on every scheduled sync. Editing one's
+  tags sets `calendar_events_cache.manually_tagged = 1` for that event,
+  and from then on:
+  - `sync_calendar()` uses the cached (protected) tags instead of
+    re-running `classify_event()` for that event.
+  - `reprocess.py` skips it entirely when reclassifying under a new
+    ruleset (and `compute_reclassification_diff`'s preview count
+    excludes it too, so the "N events would change" figure stays
+    accurate).
+
+A **"Reset to auto" button** (`POST /calendar_events/{event_id}/reset_tags`)
+appears in the Timeline UI's tag editor whenever an event is currently
+`manually_tagged` - it re-runs `classify_event()` against the *current*
+ruleset (not whatever tags happened to be cached before the override),
+writes the result, and clears the flag so the event goes back to being
+reclassified normally on future syncs/reprocess runs.
 
 ## Reprocessing
 

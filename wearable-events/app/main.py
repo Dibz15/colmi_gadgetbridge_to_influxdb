@@ -22,9 +22,11 @@ from app.config import (
 from app.ics_sync import classify_event, sync_all_calendars
 from app.influx import (
     delete_event_tag_point,
+    delete_sleep_entry,
     find_last_completed_sleep_session,
     find_manual_event_by_id,
     find_manual_events_in_range,
+    find_sleep_entries_in_range,
     list_distinct_sensor_users,
     manual_event_id,
     write_event_points,
@@ -93,6 +95,11 @@ class CalendarEventTagsIn(BaseModel):
 
 
 class SleepIn(BaseModel):
+    score: int  # 1-5
+    qualifiers: dict[str, bool] = {}
+
+
+class SleepUpdateIn(BaseModel):
     score: int  # 1-5
     qualifiers: dict[str, bool] = {}
 
@@ -423,6 +430,75 @@ def post_sleep(payload: SleepIn, current_user: dict = Depends(get_current_user))
         "qualifiers": payload.qualifiers,
         "resolved_session_duration_s": session["duration_s"],
     }
+
+
+@app.get("/sleep")
+def get_sleep_history(start: str | None = None, end: str | None = None, current_user: dict = Depends(get_current_user)):
+    ''' Read-only history of subjective sleep entries. Powers the
+    "Recent nights" list on the Sleep tab. start/end are ISO date
+    strings; defaults to the last 30 days through tomorrow.
+    '''
+    now = datetime.now(timezone.utc)
+    try:
+        start_dt = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) if start else now - timedelta(days=30)
+        end_dt = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else now + timedelta(days=1)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid start/end date: {e}") from e
+
+    entries = find_sleep_entries_in_range(current_user["username"], start_dt, end_dt)
+    entries.sort(key=lambda e: e["sleep_date"] or "", reverse=True)
+    return entries
+
+
+@app.patch("/sleep/{sleep_date}")
+def patch_sleep(sleep_date: str, payload: SleepUpdateIn, current_user: dict = Depends(get_current_user)):
+    ''' Edit an existing night's score/qualifiers. Relies on
+    write_sleep_point's fixed-per-date timestamp to overwrite cleanly -
+    no delete-and-rewrite needed, unlike event tag edits. The caller
+    (frontend) is expected to send every known qualifier explicitly as
+    true/false, not just the ones that are true - InfluxDB only
+    overwrites fields actually included in a write, so an omitted
+    qualifier that was previously true would otherwise silently persist
+    instead of being cleared.
+    '''
+    if not (1 <= payload.score <= 5):
+        raise HTTPException(400, "score must be between 1 and 5")
+
+    username = current_user["username"]
+    try:
+        date_start = datetime.fromisoformat(sleep_date).replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid sleep_date: {e}") from e
+
+    existing = find_sleep_entries_in_range(username, date_start, date_start + timedelta(days=1))
+    if not existing:
+        raise HTTPException(404, "no sleep entry found for this date")
+
+    write_sleep_point(
+        user=username,
+        sleep_date=sleep_date,
+        score=payload.score,
+        qualifiers=payload.qualifiers,
+        submission_ts=datetime.now(timezone.utc),
+    )
+    return {"sleep_date": sleep_date, "score": payload.score, "qualifiers": payload.qualifiers}
+
+
+@app.delete("/sleep/{sleep_date}")
+def delete_sleep(sleep_date: str, current_user: dict = Depends(get_current_user)):
+    ''' Delete a sleep entry entirely. '''
+    username = current_user["username"]
+    try:
+        date_start = datetime.fromisoformat(sleep_date).replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise HTTPException(400, f"invalid sleep_date: {e}") from e
+
+    existing = find_sleep_entries_in_range(username, date_start, date_start + timedelta(days=1))
+    if not existing:
+        raise HTTPException(404, "no sleep entry found for this date")
+
+    delete_sleep_entry(username, sleep_date)
+    return {"ok": True}
 
 
 # --- calendars ---

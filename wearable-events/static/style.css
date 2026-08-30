@@ -133,6 +133,37 @@ main {
   margin-top: 0.3rem;
 }
 
+.sleep-entry-row {
+  display: block;
+  padding: 0.75rem 1rem;
+}
+
+.sleep-entry-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sleep-entry-date {
+  font-weight: 700;
+  min-width: 5.5rem;
+}
+
+.sleep-entry-score {
+  color: var(--accent);
+  letter-spacing: 0.1rem;
+}
+
+.sleep-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sleep-edit-scale {
+  margin-bottom: 0;
+}
+
 .custom-tag-row {
   display: flex;
   gap: 0.5rem;

@@ -58,13 +58,14 @@
       <button class="sleep-btn" data-score="4">4</button>
       <button class="sleep-btn" data-score="5">5</button>
     </div>
-    <div class="qualifier-chips">
-      <button class="chip" data-qualifier="groggy">Groggy</button>
-      <button class="chip" data-qualifier="woke_up_often">Woke up often</button>
-      <button class="chip" data-qualifier="vivid_dreams">Vivid dreams</button>
-    </div>
+    <div class="qualifier-chips" id="sleep-qualifier-chips"></div>
     <button id="sleep-submit" disabled>Submit</button>
     <p id="sleep-status" class="status"></p>
+
+    <p class="section-label" style="margin-top:2rem">Recent nights</p>
+    <div id="sleep-history">
+      <p class="muted">Loading...</p>
+    </div>
   </section>
 
   <section id="tab-calendars" class="tab-panel">

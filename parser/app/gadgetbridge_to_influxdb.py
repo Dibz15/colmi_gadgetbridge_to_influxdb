@@ -117,10 +117,10 @@ COLMI_TIMESTAMPS_ARE_MS = os.getenv("COLMI_TIMESTAMPS_ARE_MS", "Y") == "Y"
 # Unknown values fall through as "stage_<n>" so nothing is silently
 # dropped while you calibrate this.
 SLEEP_STAGE_MAP = {
-    1: "light",
-    2: "deep",
-    3: "rem",
-    4: "awake",
+    2: "light",
+    3: "deep",
+    4: "rem",
+    1: "awake",
 }
 
 # Safety cap on catch-up distance if the checkpoint turns out to be
@@ -653,20 +653,52 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
             try:
                 row_ts = to_nanos(r[0])
                 stage_label = SLEEP_STAGE_MAP.get(r[3], f"stage_{r[3]}")
-                row = {
-                    "timestamp": row_ts,
-                    "fields" : {
-                        "sleep_stage_duration_s" : r[2],
-                        f"{stage_label}_sleep_duration_s" : r[2]
-                    },
-                    "tags" : {
-                        **device_tags(r[1]),
-                        "sample_type" : "sleep_stage",
-                        "sleep_stage" : stage_label,
-                        "sleep_stage_raw" : r[3]
-                    }
+                common_tags = {
+                    **device_tags(r[1]),
+                    "sample_type": "sleep_stage",
+                    "sleep_stage": stage_label,
+                    "sleep_stage_raw": r[3]
                 }
-                results.append(row)
+
+                # Start marker - existing duration fields, plus a
+                # sleep_stage_active state field (1=active) for the
+                # Grafana Sleep Stage Timeline panel. Without an
+                # explicit "this segment ends here" signal, Grafana's
+                # State Timeline panel just connects consecutive points
+                # in the same (stage) series - meaning a stage that
+                # recurs a few times a night rendered as one solid
+                # block from its first to its last occurrence, silently
+                # swallowing every other stage's blocks in between.
+                results.append({
+                    "timestamp": row_ts,
+                    "fields": {
+                        "sleep_stage_duration_s": r[2],
+                        f"{stage_label}_sleep_duration_s": r[2],
+                        "sleep_stage_active": 1,
+                    },
+                    "tags": common_tags,
+                })
+
+                # End marker - same series (identical tags) so it's
+                # interpreted as "this series' value changed" by
+                # State Timeline, ending the block at the right place
+                # instead of extending it to this stage's next
+                # occurrence. Reuses to_nanos() to convert the raw
+                # DURATION value the same way TIMESTAMP is converted -
+                # this assumes DURATION uses the same raw unit
+                # convention as TIMESTAMP (confirmed ms), which hasn't
+                # been independently verified the way TIMESTAMP's unit
+                # was. If blocks in the rendered panel look implausible
+                # (real sleep stage segments typically run 10-90+ min),
+                # that's the signal this assumption is wrong.
+                end_ts = row_ts + to_nanos(r[2])
+                results.append({
+                    "timestamp": end_ts,
+                    "fields": {
+                        "sleep_stage_active": 0,
+                    },
+                    "tags": common_tags,
+                })
             except (IndexError, KeyError) as e:
                 logger.warning(f'Row {r} parsing error: {e}')
                 continue

@@ -657,6 +657,46 @@
       ],
       "title": "Last Sleep Session Duration",
       "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "Single-row chronological view of sleep stages through the night - color of each block indicates which stage was active. Uses the stage label itself as the plotted value, with every other column explicitly dropped via keep(columns: [\"_time\", \"_value\"]) before group() - without that, every remaining tag column (device, user, sample_type, etc.) gets rendered as its own separate row by Grafana's Flux integration, since it treats each non-time column in the result as a plottable field, not just a grouping key. Colors come from explicit value mappings (awake=orange, rem=purple, light=light-blue, deep=dark-blue) rather than palette-classic auto-coloring, since with a single collapsed series there's only one thing for palette-classic to color - it can't differentiate by value on its own, only by series. These mappings match by label string (\"deep\", \"light\", etc.), so they're unaffected by SLEEP_STAGE_MAP recalibration - that only changes which raw integer maps to which label, not the label vocabulary itself. Any stage falling back to the unmapped \"stage_N\" label (an unrecognized raw value) won't have an explicit color and will render with Grafana's default. No hypnogram-style vertical levels (deep/light/rem/awake at different heights) - this is deliberately flatter, per request. STILL WORTH CHECKING once you have real data: segment lengths ultimately come from the raw DURATION column's start-to-next-start spacing as synced, which is a different code path than the (currently unused) sleep_stage_active start/end-marker fields the parser also writes - those remain available if a proper multi-row hypnogram is wanted later.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "awake": { "color": "orange", "index": 0 },
+                "rem": { "color": "purple", "index": 1 },
+                "light": { "color": "light-blue", "index": 2 },
+                "deep": { "color": "dark-blue", "index": 3 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 41 },
+      "id": 503,
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "alignValue": "left",
+        "rowHeight": 0.9,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_duration_s\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> map(fn: (r) => ({r with _value: r.sleep_stage}))\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> group()\n  |> sort(columns: [\"_time\"])",
+          "refId": "A"
+        }
+      ],
+      "title": "Sleep Stage Timeline",
+      "type": "state-timeline"
     }
   ],
   "refresh": "5m",

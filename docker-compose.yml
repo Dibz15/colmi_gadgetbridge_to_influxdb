@@ -278,6 +278,7 @@ services:
     restart: unless-stopped
     environment:
       SQLITE_PATH: /data/config.db
+      TZ: ${TZ:-UTC}
       INFLUX_URL: "http://influxdb:8086"
       INFLUX_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
       INFLUX_ORG: ${INFLUXDB_ORG:-home}

@@ -3,6 +3,14 @@ import os
 # --- SQLite (config db: calendars, keyword_rules, tag_definitions) ---
 SQLITE_PATH = os.getenv("SQLITE_PATH", "/data/config.db")
 
+# Used to resolve "which calendar day does this sleep session belong
+# to" in the user's own local terms, not UTC's. Without this, a
+# session starting shortly after local midnight (in any timezone ahead
+# of UTC) can resolve to the WRONG day - UTC's date for that instant
+# is still the previous day, even though it's already tomorrow
+# wherever the person actually is.
+TZ_NAME = os.getenv("TZ", "UTC")
+
 # --- InfluxDB (shared with the ring parser stack) ---
 INFLUX_URL = os.getenv("INFLUX_URL", "http://influxdb:8086")
 INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "")

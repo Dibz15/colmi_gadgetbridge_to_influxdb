@@ -672,10 +672,22 @@ function defaultTimelineRange() {
   return { start: formatDateInput(start), end: formatDateInput(end) };
 }
 
+function localDateString(isoTimestamp) {
+  // Local calendar date, not UTC's - a timestamp shortly after local
+  // midnight (any timezone ahead of UTC) can otherwise group under
+  // the previous day's heading, since UTC's date for that instant is
+  // still yesterday even though it's already tomorrow locally. Uses
+  // the browser's own local timezone automatically (no TZ config
+  // needed here, unlike the backend - the browser already knows).
+  const d = new Date(isoTimestamp);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function groupByDay(entries) {
   const groups = {};
   entries.forEach(entry => {
-    const day = entry.timestamp.slice(0, 10); // YYYY-MM-DD from ISO timestamp
+    const day = localDateString(entry.timestamp);
     if (!groups[day]) groups[day] = [];
     groups[day].push(entry);
   });

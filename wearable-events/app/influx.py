@@ -1,6 +1,7 @@
 import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -15,6 +16,7 @@ from app.config import (
     MIN_SLEEP_SESSION_SECONDS,
     SENSOR_MEASUREMENT,
     SLEEP_MEASUREMENT,
+    TZ_NAME,
 )
 
 _client = None
@@ -306,9 +308,28 @@ def find_last_completed_sleep_session(user: str, lookback_days: int = 7) -> dict
         for record in table.records:
             start_time = record.get_time()
             duration_s = record.get_value()
+            # Resolve the calendar date in the user's own local
+            # timezone, not UTC's - a session starting shortly after
+            # local midnight (any timezone ahead of UTC) can otherwise
+            # resolve to the wrong day, since UTC's date for that same
+            # instant is still the previous one.
+            local_start_time = start_time.astimezone(ZoneInfo(TZ_NAME))
             return {
-                "sleep_date": start_time.strftime("%Y-%m-%d"),
-                "start_time": start_time,
+                "sleep_date": local_start_time.strftime("%Y-%m-%d"),
+                # Deliberately the LOCAL-timezone version, not the raw
+                # UTC one - astimezone() doesn't change which real
+                # instant this represents, only which timezone's clock
+                # face it displays, so this is safe for any absolute-
+                # time math a future caller might do. Returning the
+                # local version keeps this dict internally consistent
+                # with sleep_date above - if this were left as raw UTC
+                # instead, a future caller formatting it directly
+                # (e.g. to show "sleep started at HH:MM") would get a
+                # time that doesn't match the local date sitting right
+                # next to it in this same dict. Nothing currently reads
+                # this field, but that's exactly why the inconsistency
+                # would be easy to introduce unnoticed later.
+                "start_time": local_start_time,
                 "duration_s": int(duration_s),
             }
 

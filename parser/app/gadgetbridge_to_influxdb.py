@@ -137,6 +137,22 @@ MAX_CATCHUP_SECONDS = int(os.getenv("MAX_CATCHUP_SECONDS", str(30 * 86400)))
 # measurement+tags+timestamp rather than duplicating them.
 CHECKPOINT_OVERLAP_SECONDS = int(os.getenv("CHECKPOINT_OVERLAP_SECONDS", "300"))
 
+# Tolerance for a sample/checkpoint being ahead of "now" - real sensor
+# data can't be recorded before it happens, so anything meaningfully in
+# the future is almost certainly corrupted raw data, not a genuine
+# future measurement. Small enough to allow for minor clock skew
+# between this container and the ring/phone, large enough not to
+# false-positive on that skew. This exists because a single bad-
+# timestamped sample was found to permanently break checkpoint-based
+# sync: since a future timestamp is always "the most recent" no matter
+# how many real syncs happen afterward, one corrupted row was enough to
+# make every subsequent sync resume from a point in the future,
+# matching nothing real ever again - and silently re-corrupt itself
+# right back if only fixed in one place rather than all three (see
+# get_last_checkpoint_ns usage in extract_data, note_observed, and
+# write_results).
+MAX_FUTURE_TOLERANCE_SECONDS = int(os.getenv("MAX_FUTURE_TOLERANCE_SECONDS", "300"))
+
 ### Config ends
 
 
@@ -361,6 +377,25 @@ def extract_data(cur, client):
 
     checkpoint_ns = get_last_checkpoint_ns(client)
 
+    # A checkpoint that's already in the future is impossible for a
+    # legitimate "last synced sample" to be - reject it and fall back
+    # to QUERY_DURATION instead of resuming from a point that will
+    # never match anything real. This is what actually recovers from
+    # an already-corrupted checkpoint sitting in InfluxDB; the guards
+    # in note_observed/write_results only prevent this from happening
+    # again going forward, they don't undo damage already done.
+    if checkpoint_ns is not None:
+        now_ns_check = time.time_ns()
+        if checkpoint_ns > now_ns_check + (MAX_FUTURE_TOLERANCE_SECONDS * 1_000_000_000):
+            hours_ahead = (checkpoint_ns - now_ns_check) / 1e9 / 3600
+            logger.warning(
+                f"Checkpoint is {hours_ahead:.2f}h in the future - almost certainly "
+                f"corrupted by a bad sample's timestamp in an earlier sync. Ignoring "
+                f"it and falling back to QUERY_DURATION instead of resuming from an "
+                f"impossible point in time."
+            )
+            checkpoint_ns = None
+
     if checkpoint_ns is not None:
         # Convert the checkpoint (nanoseconds, InfluxDB-native) down to
         # raw-sqlite-column units (ms or s) directly, then subtract the
@@ -427,6 +462,27 @@ def extract_data(cur, client):
     device_tags = _device_tags_factory(devices)
 
     def note_observed(device_id, row_ts):
+        ''' Tracks the most recent sample timestamp per device, used to
+        compute the sync_check/last_seen checkpoint. Rejects (and
+        warns about) any timestamp meaningfully in the future - real
+        sensor data can't be recorded before it happens, so a future
+        timestamp means the raw sample is corrupted. Without this
+        guard, a single bad row would become "the most recent"
+        checkpoint forever (nothing beats a future timestamp), and
+        every subsequent sync would resume from a point in the future
+        that never matches anything real again. This is exactly what
+        happened in practice before this check existed.
+        '''
+        now_ns = time.time_ns()
+        if row_ts > now_ns + (MAX_FUTURE_TOLERANCE_SECONDS * 1_000_000_000):
+            hours_ahead = (row_ts - now_ns) / 1e9 / 3600
+            logger.warning(
+                f"Ignoring implausible future-dated sample for checkpoint purposes "
+                f"(device={device_id}, {hours_ahead:.2f}h ahead of now) - likely "
+                f"corrupted raw data. This sample's timestamp will not be allowed "
+                f"to become the sync checkpoint."
+            )
+            return
         key = f"dev-{device_id}"
         if key not in devices_observed or devices_observed[key] < row_ts:
             devices_observed[key] = row_ts
@@ -735,6 +791,31 @@ def get_sleep_data(cur, device_tags, query_start_bound_scaled):
                     },
                     "tags": common_tags,
                 })
+
+                # Dense per-minute coverage for the Grafana Sleep Stage
+                # Timeline panel - one point per minute this stage was
+                # actually active, each holding the stage label
+                # directly as a string field. This exists because the
+                # sparse start(1)/end(0) marker approach above depends
+                # on Grafana's State Timeline correctly inferring which
+                # side of a boundary to color from just two points -
+                # after several rounds of trying to get that right
+                # through JSON authoring alone (which side gets colored
+                # turned out to be genuinely ambiguous without live
+                # testing), this sidesteps the question entirely: with
+                # a point every 60 seconds and no real gaps (segments
+                # are contiguous), there's no interpolation left for
+                # Grafana to get wrong in either direction.
+                minutes = int(r[2])
+                for minute_offset in range(minutes):
+                    point_ts = row_ts + (minute_offset * 60 * 1_000_000_000)
+                    results.append({
+                        "timestamp": point_ts,
+                        "fields": {
+                            "sleep_stage_now": stage_label,
+                        },
+                        "tags": common_tags,
+                    })
             except (IndexError, KeyError) as e:
                 logger.warning(f'Row {r} parsing error: {e}')
                 continue
@@ -748,10 +829,22 @@ def write_results(results, client):
     each opening its own connection.
     '''
     logger.debug(f"Writing {len(results)} point(s) tagged user={GADGETBRIDGE_USER!r}")
+    now_ns = time.time_ns()
+    max_future_ns = now_ns + (MAX_FUTURE_TOLERANCE_SECONDS * 1_000_000_000)
     write_failures = 0
+    skipped_future = 0
     with client.write_api() as _write_client:
         # Iterate through the results generating and writing points
         for row in results:
+            if row['timestamp'] > max_future_ns:
+                skipped_future += 1
+                logger.warning(
+                    f"Skipping point with implausible future timestamp "
+                    f"(tags={row['tags']}) - likely corrupted raw data, same class "
+                    f"of issue note_observed() guards against for the checkpoint."
+                )
+                continue
+
             p = Point(INFLUXDB_MEASUREMENT)
 
             # Applied here, once, rather than threaded through every
@@ -798,6 +891,8 @@ def write_results(results, client):
 
     if write_failures:
         logger.warning(f"{write_failures} of {len(results)} point(s) failed to write this run - see warnings above for details")
+    if skipped_future:
+        logger.warning(f"{skipped_future} of {len(results)} point(s) skipped for having implausible future timestamps this run")
 
 
 if __name__ == "__main__":

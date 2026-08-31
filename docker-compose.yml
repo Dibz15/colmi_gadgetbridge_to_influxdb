@@ -227,6 +227,7 @@ services:
       QUERY_DURATION: ${QUERY_DURATION:-86400}
       MAX_CATCHUP_SECONDS: ${MAX_CATCHUP_SECONDS:-2592000}
       CHECKPOINT_OVERLAP_SECONDS: ${CHECKPOINT_OVERLAP_SECONDS:-300}
+      MAX_FUTURE_TOLERANCE_SECONDS: ${MAX_FUTURE_TOLERANCE_SECONDS:-300}
 
       # --- InfluxDB target - same network, so use the service name.
       # Reuses the same INFLUXDB_ORG/BUCKET/TOKEN vars as the influxdb
@@ -249,8 +250,7 @@ services:
     networks:
       - biomarker-net
     depends_on:
-      influxdb:
-        condition: service_started
+      - influxdb
     x-casaos:
       envs:
         - container: WEBDAV_URL

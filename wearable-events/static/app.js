@@ -8,6 +8,28 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
+function escapeHtml(str) {
+  // Any place user-typed or externally-sourced text (a regex keyword
+  // rule pattern, a calendar name, a tag, a username, an ICS event
+  // title from someone else's calendar invite) gets inserted into a
+  // template literal that's later assigned to .innerHTML MUST go
+  // through this first. Without it, the browser's HTML parser reads
+  // characters like < > & as markup rather than literal text - a
+  // regex pattern like <\d{3}> gets parsed as an (invalid) HTML tag
+  // and silently vanishes from what's rendered, which is exactly the
+  // "characters disappear" bug this fixes. Not primarily a security
+  // fix (this is a single-user, self-hosted app) - it's a display-
+  // correctness fix, since the disappearing content was never
+  // executable, just mis-parsed as markup instead of text.
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 async function api(path, options = {}) {
   const resp = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -369,7 +391,7 @@ async function loadCalendars() {
       const lastSynced = cal.last_synced ? `Last synced: ${cal.last_synced}` : "Never synced";
       const errorLine = cal.last_error ? `<div class="cal-error">${cal.last_error}</div>` : "";
       row.innerHTML = `
-        <div class="cal-name">${cal.name} ${cal.enabled ? "" : "(disabled)"}</div>
+        <div class="cal-name">${escapeHtml(cal.name)} ${cal.enabled ? "" : "(disabled)"}</div>
         <div class="cal-meta">${lastSynced} · default: ${cal.default_tag}</div>
         ${errorLine}
       `;
@@ -423,7 +445,7 @@ function renderRuleList() {
     row.className = "list-row" + (marked ? " marked-deleted" : "");
     row.innerHTML = `
       <div>
-        <div class="row-title">"${rule.keyword}" → <strong>${rule.tag}</strong></div>
+        <div class="row-title">"${escapeHtml(rule.keyword)}" → <strong>${escapeHtml(rule.tag)}</strong></div>
         <div class="row-meta">${rule.category} · priority ${rule.priority} · ${fieldNote}${exclusiveNote}${marked ? " · marked for deletion" : ""}</div>
       </div>
       <button class="small-btn ${marked ? "" : "danger"}">${marked ? "Undo" : "Delete"}</button>
@@ -442,7 +464,7 @@ function renderRuleList() {
     row.className = "list-row pending-new";
     row.innerHTML = `
       <div>
-        <div class="row-title">"${rule.keyword}" → <strong>${rule.tag}</strong></div>
+        <div class="row-title">"${escapeHtml(rule.keyword)}" → <strong>${escapeHtml(rule.tag)}</strong></div>
         <div class="row-meta">${rule.category} · priority ${rule.priority} · ${fieldNote}${exclusiveNote} · pending</div>
       </div>
       <button class="small-btn danger">Remove</button>
@@ -611,7 +633,7 @@ async function loadTagDefManage() {
       row.className = "list-row";
       row.innerHTML = `
         <div>
-          <div class="row-title">${def.label} <span class="muted">(${def.tag})</span></div>
+          <div class="row-title">${escapeHtml(def.label)} <span class="muted">(${escapeHtml(def.tag)})</span></div>
           <div class="row-meta">${def.category}${def.is_duration ? " · duration" : ""} · order ${def.sort_order}</div>
         </div>
         <button class="small-btn danger" data-id="${def.id}">Delete</button>
@@ -696,7 +718,7 @@ function groupByDay(entries) {
 
 function renderTagChips(tags) {
   if (!tags || !tags.length) return "";
-  return `<div class="timeline-tags">${tags.map(t => `<span class="chip-small">${t}</span>`).join("")}</div>`;
+  return `<div class="timeline-tags">${tags.map(t => `<span class="chip-small">${escapeHtml(t)}</span>`).join("")}</div>`;
 }
 
 // --- Timeline edit state ---
@@ -857,8 +879,8 @@ function renderTimelineEntryReadonly(entry) {
       <div class="timeline-entry-main">
         <span class="timeline-time">${time}</span>
         <span class="timeline-kind-badge cal">Calendar</span>
-        <span class="timeline-title">${entry.title || "(untitled event)"}</span>
-        <span class="muted timeline-cal-name">${entry.calendar || ""}${durationNote}</span>
+        <span class="timeline-title">${escapeHtml(entry.title) || "(untitled event)"}</span>
+        <span class="muted timeline-cal-name">${escapeHtml(entry.calendar) || ""}${durationNote}</span>
         <button class="small-btn timeline-edit-btn">Edit tags</button>
       </div>
       ${renderTagChips(entry.tags)}${overrideBadge}
@@ -1016,7 +1038,7 @@ async function loadUserList() {
     users.forEach(u => {
       const row = document.createElement("div");
       row.className = "list-row";
-      row.innerHTML = `<div class="row-title">${u.username}</div>`;
+      row.innerHTML = `<div class="row-title">${escapeHtml(u.username)}</div>`;
       container.appendChild(row);
     });
   } catch (e) {

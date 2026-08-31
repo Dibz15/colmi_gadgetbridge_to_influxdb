@@ -1,8 +1,8 @@
 import json
-import re
 from datetime import datetime, timezone
 
 import httpx
+import regex as re
 from icalendar import Calendar
 from loguru import logger
 

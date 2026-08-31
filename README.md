@@ -112,7 +112,7 @@ wearable-events:
 ```
 
 then run `docker compose up -d --build` later in step 4. Do the same for
-the `parser` service (`context: ./colmi_gadgetbridge_to_influxdb`) if you
+the `parser` service (`context: ./parser`) if you
 want that one built locally too.
 
 (If you're maintaining your own fork and want it to build and publish

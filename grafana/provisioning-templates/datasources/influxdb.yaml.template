@@ -1,0 +1,21 @@
+apiVersion: 1
+
+# TEMPLATE - rendered via envsubst by the grafana-provisioning-init
+# service in docker-compose.yml before Grafana starts (see that service
+# for the exact variable list passed to envsubst). Do not edit the
+# rendered output directly - it lives in a Docker volume, not a file on
+# disk, and gets overwritten on every container restart.
+datasources:
+  - name: InfluxDB
+    uid: influxdb-main
+    type: influxdb
+    access: proxy
+    url: $INFLUX_URL
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: $INFLUXDB_ORG
+      defaultBucket: $INFLUXDB_BUCKET
+      tlsSkipVerify: true
+    secureJsonData:
+      token: $INFLUXDB_TOKEN

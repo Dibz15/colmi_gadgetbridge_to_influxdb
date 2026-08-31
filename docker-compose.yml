@@ -1,0 +1,331 @@
+# ---------------------------------------------------------------------------
+# Biomarker stack: InfluxDB (storage) + Grafana (dashboards) + ntfy (alerts)
+#
+# Includes the Colmi parser and wearable-events as prebuilt images pulled
+# from Docker Hub - both built via one monorepo GitHub Actions workflow
+# at .github/workflows/docker-publish.yml (path-filtered, so pushing a
+# change to one service doesn't rebuild the other). The parser loops on
+# SYNC_INTERVAL_SECONDS, pulling the Gadgetbridge export from Nextcloud
+# WebDAV and writing points into InfluxDB - no external cron needed, and
+# no local build context required for this compose file, so it works
+# fine pasted directly into CasaOS.
+#
+# Set `image:` on the parser and wearable-events services below to your
+# own Docker Hub username/repo once you've pushed them.
+#
+# All secrets/config below have inline defaults but are meant to be
+# overridden via a .env file sitting next to this docker-compose.yml -
+# Compose reads .env automatically, no extra flag needed. See
+# .env.example in this same output for the variables to set there;
+# copy it to .env and fill in real values before first boot. Anything not
+# set in .env falls back to the (placeholder) default baked into this file.
+#
+# After first `docker compose up -d`:
+#   1. Set the INFLUXDB_TOKEN and INFLUXDB_INIT_ADMIN_TOKEN to the SAME
+#      value in both the influxdb and parser service env blocks below
+#      (or generate one via the InfluxDB UI and copy it into parser's env)
+#   2. Fill in the parser service's WEBDAV_* values for your Nextcloud
+#   3. Open Grafana at http://<host>:3000 (default login admin/admin,
+#      you'll be forced to change it)
+#   4. Add InfluxDB as a data source (URL: http://influxdb:8086, use the
+#      token/org/bucket you set below)
+#   5. Open ntfy at http://<host>:8090, subscribe to your chosen topic
+#      from the ntfy Android/iOS app or web UI
+# ---------------------------------------------------------------------------
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: grafana
+  category: "Health"
+  index: "/"
+  port_map: "3000"
+  scheme: "http"
+  title:
+    en_us: "Biomarker Stack"
+  description:
+    en_us: "Self-hosted InfluxDB + Grafana + ntfy stack for wearable biomarker data (HRV, HR, temperature, stress) synced from Gadgetbridge."
+  tagline:
+    en_us: "Own your biomarker data, self-hosted"
+  icon: "https://grafana.com/static/img/menu/grafana2.svg"
+  developer: "self"
+  author: "self"
+
+services:
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: biomarker-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      # First-run setup - only takes effect on an empty data volume.
+      # After first boot, manage users/tokens via the InfluxDB UI instead
+      # of editing these.
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_INIT_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_INIT_PASSWORD:-changeme_admin_password}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-home}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-health}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+    volumes:
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/influxdb/data:/var/lib/influxdb2
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/influxdb/config:/etc/influxdb2
+    networks:
+      - biomarker-net
+    x-casaos:
+      envs:
+        - container: DOCKER_INFLUXDB_INIT_PASSWORD
+          description:
+            en_us: "InfluxDB admin password - change before first boot"
+        - container: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+          description:
+            en_us: "InfluxDB API token - used by Grafana and the parser script"
+      ports:
+        - container: "8086"
+          description:
+            en_us: "InfluxDB HTTP API / UI"
+      volumes:
+        - container: /var/lib/influxdb2
+          description:
+            en_us: "InfluxDB time-series data"
+        - container: /etc/influxdb2
+          description:
+            en_us: "InfluxDB config"
+
+  # Renders the Grafana provisioning templates (datasource + alerting +
+  # dashboards) with envsubst before Grafana starts, then exits. Exists because
+  # Grafana's alert-rule/contact-point provisioning does NOT support
+  # $ENV_VAR interpolation the way datasource provisioning does - a
+  # literal "$INFLUXDB_BUCKET" string was being sent straight to
+  # InfluxDB and failing with "could not find bucket". Templating it
+  # ourselves keeps every value centralized in .env instead of hardcoding
+  # secrets (like the ntfy password) into repo-tracked YAML.
+  grafana-provisioning-init:
+    image: alpine:3.20
+    container_name: biomarker-grafana-provisioning-init
+    restart: "no"
+    environment:
+      INFLUX_URL: "http://influxdb:8086"
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-home}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-health}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
+      ALERT_HRV_USER: ${ALERT_HRV_USER:-primary}
+      NTFY_TOPIC: ${NTFY_TOPIC:-biomarker-alerts}
+      NTFY_USER: ${NTFY_GRAFANA_USER:-grafana}
+      NTFY_PASSWORD: ${NTFY_GRAFANA_PASSWORD:-changeme_ntfy_password}
+      NTFY_PRIORITY: ${NTFY_PRIORITY:-4}
+    volumes:
+      - ./grafana/provisioning-templates:/templates:ro
+      - ./grafana/render-provisioning.sh:/render-provisioning.sh:ro
+      - grafana-provisioning:/output
+    command: sh /render-provisioning.sh
+    networks:
+      - biomarker-net
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: biomarker-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme_grafana_password}
+      GF_INSTALL_PLUGINS: ""
+      # Alerting is enabled by default in modern Grafana - no extra flag
+      # needed for the provisioned datasource/contact point/rule to
+      # take effect, as long as grafana-provisioning-init has already
+      # rendered them into the grafana-provisioning volume (see
+      # depends_on below).
+    volumes:
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/grafana/data:/var/lib/grafana
+      - grafana-provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - biomarker-net
+    depends_on:
+      influxdb:
+        condition: service_started
+      ntfy:
+        condition: service_started
+      grafana-provisioning-init:
+        condition: service_completed_successfully
+    x-casaos:
+      envs:
+        - container: GF_SECURITY_ADMIN_PASSWORD
+          description:
+            en_us: "Grafana admin password - change before first boot"
+      ports:
+        - container: "3000"
+          description:
+            en_us: "Grafana web UI"
+      volumes:
+        - container: /var/lib/grafana
+          description:
+            en_us: "Grafana dashboards, users, settings"
+        - container: /etc/grafana/provisioning
+          description:
+            en_us: "Grafana datasource/alerting provisioning files (repo-tracked, read-only)"
+
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: biomarker-ntfy
+    restart: unless-stopped
+    command:
+      - serve
+    environment:
+      TZ: ${TZ:-Europe/London}
+      NTFY_BASE_URL: "http://localhost:8090"
+      # Keep this reachable only over Tailscale rather than opening it to
+      # the wider internet - ntfy has no auth by default on the topic you
+      # publish/subscribe to
+      NTFY_LISTEN_HTTP: ":80"
+      NTFY_CACHE_FILE: "/var/cache/ntfy/cache.db"
+      NTFY_AUTH_FILE: "/var/lib/ntfy/auth.db"
+      NTFY_AUTH_DEFAULT_ACCESS: "deny-all"
+      NTFY_ENABLE_SIGNUP: "false"
+    ports:
+      - "8090:80"
+    volumes:
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/ntfy/cache:/var/cache/ntfy
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/ntfy/lib:/var/lib/ntfy
+    networks:
+      - biomarker-net
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_us: "Timezone for notification timestamps"
+      ports:
+        - container: "80"
+          description:
+            en_us: "ntfy web UI / publish-subscribe API"
+      volumes:
+        - container: /var/cache/ntfy
+          description:
+            en_us: "ntfy message cache"
+        - container: /var/lib/ntfy
+          description:
+            en_us: "ntfy auth database (since NTFY_AUTH_DEFAULT_ACCESS is deny-all)"
+
+  parser:
+    image: ${PARSER_IMAGE:-yourdockerhubuser/colmi-gadgetbridge-to-influxdb:latest}
+    container_name: biomarker-parser
+    restart: unless-stopped
+    environment:
+      # --- WebDAV (Nextcloud) source ---
+      WEBDAV_URL: ${WEBDAV_URL:-https://your-nextcloud-domain/remote.php/dav/}
+      WEBDAV_PATH: ${WEBDAV_PATH:-files/your_nextcloud_user/GadgetBridge/}
+      WEBDAV_USER: ${WEBDAV_USER:-your_nextcloud_user}
+      WEBDAV_PASS: ${WEBDAV_PASS:-your_nextcloud_app_password}
+      EXPORT_FILENAME: ${EXPORT_FILENAME:-Gadgetbridge}
+
+      # --- Query window ---
+      QUERY_DURATION: ${QUERY_DURATION:-86400}
+      MAX_CATCHUP_SECONDS: ${MAX_CATCHUP_SECONDS:-2592000}
+      CHECKPOINT_OVERLAP_SECONDS: ${CHECKPOINT_OVERLAP_SECONDS:-300}
+      MAX_FUTURE_TOLERANCE_SECONDS: ${MAX_FUTURE_TOLERANCE_SECONDS:-300}
+
+      # --- InfluxDB target - same network, so use the service name.
+      # Reuses the same INFLUXDB_ORG/BUCKET/TOKEN vars as the influxdb
+      # service above, so they only need setting once in .env ---
+      INFLUXDB_URL: "http://influxdb:8086"
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-home}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-health}
+      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
+
+      # --- Behaviour ---
+      SLEEP_HOURS: ${SLEEP_HOURS:-0,1,2,3,4,5,6}
+      COLMI_TIMESTAMPS_ARE_MS: ${COLMI_TIMESTAMPS_ARE_MS:-Y}
+      REMOVE_TEMP_DB: ${REMOVE_TEMP_DB:-Y}
+      GADGETBRIDGE_USER: ${GADGETBRIDGE_USER:-primary}
+
+      # How often the loop re-runs (seconds). 1800 = every 30 min, plenty
+      # given Gadgetbridge itself only auto-exports periodically.
+      SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-1800}
+    networks:
+      - biomarker-net
+    depends_on:
+      - influxdb
+    x-casaos:
+      envs:
+        - container: WEBDAV_URL
+          description:
+            en_us: "Nextcloud WebDAV base URL"
+        - container: WEBDAV_PATH
+          description:
+            en_us: "Path to the Gadgetbridge export folder on Nextcloud"
+        - container: WEBDAV_USER
+          description:
+            en_us: "Nextcloud username"
+        - container: WEBDAV_PASS
+          description:
+            en_us: "Nextcloud app password (create a dedicated app password, not your main login)"
+        - container: INFLUXDB_TOKEN
+          description:
+            en_us: "Must match the InfluxDB admin token set on the influxdb service"
+        - container: SYNC_INTERVAL_SECONDS
+          description:
+            en_us: "How often to re-check the Nextcloud export, in seconds"
+
+  wearable-events:
+    image: ${WEARABLE_EVENTS_IMAGE:-yourdockerhubuser/wearable-events:latest}
+    container_name: biomarker-wearable-events
+    restart: unless-stopped
+    environment:
+      SQLITE_PATH: /data/config.db
+      INFLUX_URL: "http://influxdb:8086"
+      INFLUX_TOKEN: ${INFLUXDB_TOKEN:-changeme_admin_token}
+      INFLUX_ORG: ${INFLUXDB_ORG:-home}
+      INFLUX_BUCKET: ${INFLUXDB_BUCKET:-health}
+      EVENTS_MEASUREMENT: ${EVENTS_MEASUREMENT:-events}
+      SLEEP_MEASUREMENT: ${SLEEP_MEASUREMENT:-subjective_sleep}
+      SENSOR_MEASUREMENT: ${INFLUXDB_MEASUREMENT:-colmi}
+      SYNC_INTERVAL_MINUTES: ${CALENDAR_SYNC_INTERVAL_MINUTES:-15}
+      MIN_SLEEP_SESSION_SECONDS: ${MIN_SLEEP_SESSION_SECONDS:-10800}
+      PORT: "8080"
+      # First-run bootstrap only - creates one login if the users table
+      # is empty. After that, add further household members from the
+      # Manage tab (no public signup page). Use the same username as
+      # that person's GADGETBRIDGE_USER value on their ring parser
+      # instance so their data correlates later.
+      ADMIN_USERNAME: ${WEARABLE_EVENTS_ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${WEARABLE_EVENTS_ADMIN_PASSWORD:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-N}
+      SESSION_MAX_AGE_DAYS: ${SESSION_MAX_AGE_DAYS:-30}
+    volumes:
+      - ${APPDATA_ROOT:-/DATA/AppData/biomarker-stack}/wearable-events:/data
+    ports:
+      - "8081:8080"
+    networks:
+      - biomarker-net
+    depends_on:
+      - influxdb
+    x-casaos:
+      envs:
+        - container: SYNC_INTERVAL_MINUTES
+          description:
+            en_us: "How often to poll ICS calendar feeds, in minutes"
+      ports:
+        - container: "8080"
+          description:
+            en_us: "Wearable Events web UI (tagging, sleep score, calendar management)"
+      volumes:
+        - container: /data
+          description:
+            en_us: "SQLite config db (calendars, keyword rules, tag definitions)"
+
+networks:
+  biomarker-net:
+    driver: bridge
+
+volumes:
+  # Rendered Grafana provisioning output (from grafana/provisioning-templates/
+  # via grafana-provisioning-init) - a named Docker volume rather than a
+  # bind mount, since it's generated content, not something to edit by
+  # hand or track in the repo.
+  grafana-provisioning:

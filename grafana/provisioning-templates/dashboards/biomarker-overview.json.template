@@ -1,0 +1,749 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100, "title": "Sync Health", "type": "row" },
+
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "How long since the parser last wrote a point for this device. If this climbs past a few hours, check the parser container's logs and that Gadgetbridge is still auto-exporting.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 3600000000000 },
+              { "color": "red", "value": 21600000000000 }
+            ]
+          },
+          "unit": "ns"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 0, "y": 1 },
+      "id": 101,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -1d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r.sample_type == \"sync_check\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> filter(fn: (r) => r._field == \"last_seen_age\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Time Since Last Sync",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 6, "y": 1 },
+      "id": 102,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -1d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"heart_rate\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> filter(fn: (r) => r.sample_type == \"heart_rate\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Heart Rate (bpm)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "max": 100,
+          "min": 80,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 92 },
+              { "color": "green", "value": 95 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 12, "y": 1 },
+      "id": 103,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -1d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"spo2\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest SpO2",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 18, "y": 1 },
+      "id": 104,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -1d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"temperature\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Temperature",
+      "type": "stat"
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 4 }, "id": 200, "title": "Heart Rate & HRV", "type": "row" },
+
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 201,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"heart_rate\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> filter(fn: (r) => r.sample_type == \"heart_rate\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "A"
+        }
+      ],
+      "title": "Heart Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "Raw per-reading HRV values (ms). This is a noisier signal than the alert rule's 24h/14d averages - use it to spot obvious sensor issues, not for day-to-day trend reading.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 202,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"hrv\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "A"
+        }
+      ],
+      "title": "HRV",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 13 },
+      "id": 203,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"heart_rate\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> filter(fn: (r) => r.sample_type == \"heart_rate\")\n  |> mean()",
+          "refId": "A"
+        }
+      ],
+      "title": "Mean Heart Rate (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 120 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 13 },
+      "id": 204,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"heart_rate\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> filter(fn: (r) => r.sample_type == \"heart_rate\")\n  |> max()",
+          "refId": "A"
+        }
+      ],
+      "title": "Max Heart Rate (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 13 },
+      "id": 205,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -7d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"hrv\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest HRV Reading",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "The ring's own on-device 7-day HRV average, from COLMI_HRV_SUMMARY_SAMPLE - a second opinion alongside the raw hrv field above.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 13 },
+      "id": 206,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -14d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"hrv_weekly_average\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "HRV Weekly Average (device-computed)",
+      "type": "stat"
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }, "id": 300, "title": "Stress", "type": "row" },
+
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "Both series: raw stress score, and the same score excluding your configured sleep hours (SLEEP_HOURS in the parser's env).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 18 },
+      "id": 301,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"stress\" or r._field == \"stress_exc_sleep\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "A"
+        }
+      ],
+      "title": "Stress",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 75 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 12, "y": 18 },
+      "id": 302,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"stress\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> mean()",
+          "refId": "A"
+        }
+      ],
+      "title": "Mean Stress (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 75 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 18, "y": 18 },
+      "id": 303,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"stress_exc_sleep\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> mean()",
+          "refId": "A"
+        }
+      ],
+      "title": "Mean Stress Excl. Sleep (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 90 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 21 },
+      "id": 304,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"stress\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> max()",
+          "refId": "A"
+        }
+      ],
+      "title": "Max Stress (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 90 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 21 },
+      "id": 305,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"stress_exc_sleep\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> max()",
+          "refId": "A"
+        }
+      ],
+      "title": "Max Stress Excl. Sleep (range)",
+      "type": "stat"
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }, "id": 400, "title": "Temperature", "type": "row" },
+
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "Skin temperature from the ring. Watch for nighttime spikes relative to your own baseline, not absolute values - single-point-of-contact skin sensors run cooler/noisier than a core-temp reading.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 26 },
+      "id": 401,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"temperature\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "A"
+        }
+      ],
+      "title": "Temperature",
+      "type": "timeseries"
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }, "id": 500, "title": "Sleep", "type": "row" },
+
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "Each point is one sleep-stage segment's duration. Series are split automatically by the sleep_stage tag (light/deep/rem/awake) - see the parser README for the caveat that these stage labels are a best-effort guess, not confirmed against Gadgetbridge source.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 0,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 16, "x": 0, "y": 34 },
+      "id": 501,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_duration_s\")\n  |> filter(fn: (r) => r.user == \"${user}\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Sleep Stage Durations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 18000 }, { "color": "green", "value": 25200 }] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 34 },
+      "id": 502,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: -2d)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_session_duration_s\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "title": "Last Sleep Session Duration",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+      "description": "Sleep stages through the night - one row per stage, colored blocks show when each was active. Queries sleep_stage_active (1=start, 0=end, already independently confirmed correct against real data), reshaped from long to wide format via pivot(rowKey: [\"_time\"], columnKey: [\"sleep_stage\"], valueColumn: \"_value\") - each stage becomes its own named column/field rather than a separate grouped table, which is a more natively-supported Grafana data shape than the long-format table tricks earlier versions of this panel relied on (a union() of four separately-filtered per-stage series, before that a single collapsed row, before that per-segment sparse markers with no explicit end - see prior edits to this file for what didn't work and why, if this ever needs revisiting). Row order is set explicitly via the panel's own \"organize fields by name\" transformation (indexByName), rather than left to whatever order the query happens to return columns in - deep/light/rem/awake, intended bottom-to-top per the classic hypnogram convention. \"0\" is mapped to transparent so each stage's own off-periods (its end marker) read as blank rather than a visible block; palette-classic auto-colors each row differently. GENUINELY UNVERIFIED: whether index 0 renders as the top row or the bottom row for a State Timeline panel - if the stacking comes out backwards, just reverse the indexByName numbers (swap deep/awake and light/rem).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "color": "transparent", "index": 0 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 41 },
+      "id": 503,
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "alignValue": "left",
+        "rowHeight": 0.9,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+          "query": "from(bucket: \"$INFLUXDB_BUCKET\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")\n  |> filter(fn: (r) => r._field == \"sleep_stage_active\")\n  |> filter(fn: (r) => r.user == \"${user}\")\n  |> keep(columns: [\"_time\", \"_value\", \"sleep_stage\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"sleep_stage\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {},
+            "indexByName": {
+              "_time": 0,
+              "deep": 4,
+              "light": 3,
+              "rem": 2,
+              "awake": 1
+            },
+            "renameByName": {}
+          }
+        }
+      ],
+      "title": "Sleep Stage Timeline",
+      "type": "state-timeline"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["biomarker-stack"],
+  "templating": {
+    "list": [
+      {
+        "current": { "value": "$ALERT_HRV_USER", "text": "$ALERT_HRV_USER" },
+        "datasource": { "type": "influxdb", "uid": "influxdb-main" },
+        "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(bucket: \"$INFLUXDB_BUCKET\", tag: \"user\", predicate: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "user",
+        "options": [],
+        "query": {
+          "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(bucket: \"$INFLUXDB_BUCKET\", tag: \"user\", predicate: (r) => r._measurement == \"$INFLUXDB_MEASUREMENT\")"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Biomarker Overview",
+  "uid": "biomarker-overview",
+  "version": 1,
+  "weekStart": ""
+}

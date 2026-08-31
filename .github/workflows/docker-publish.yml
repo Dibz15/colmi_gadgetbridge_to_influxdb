@@ -1,0 +1,125 @@
+name: Build and push images
+
+# Monorepo workflow: builds colmi_gadgetbridge_to_influxdb/ and
+# wearable-events/ as two separate Docker Hub images from one repo.
+# Each only rebuilds when its own directory (or this workflow file)
+# changes, via dorny/paths-filter - pushing a wearable-events change
+# doesn't trigger an unnecessary parser rebuild and vice versa.
+#
+# workflow_dispatch always builds both, regardless of what changed -
+# useful for a manual "rebuild everything" (e.g. after rotating a base
+# image or changing a shared secret).
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*.*.*"]
+  workflow_dispatch: {}
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      parser: ${{ steps.filter.outputs.parser }}
+      wearable_events: ${{ steps.filter.outputs.wearable_events }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        # On workflow_dispatch there's no base ref to diff against, so
+        # paths-filter can't compute changes - force both true in that
+        # case rather than defaulting to "nothing changed".
+        with:
+          filters: |
+            parser:
+              - 'parser/**'
+              - '.github/workflows/docker-publish.yml'
+            wearable_events:
+              - 'wearable-events/**'
+              - '.github/workflows/docker-publish.yml'
+
+      - name: Force both on manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Manual run - building both images regardless of changed paths"
+
+  build-parser:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.parser == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/colmi2influx
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,prefix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./colmi_gadgetbridge_to_influxdb
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=parser
+          cache-to: type=gha,mode=max,scope=parser
+
+  build-wearable-events:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.wearable_events == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/wearable-events-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,prefix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./wearable-events
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=wearable-events
+          cache-to: type=gha,mode=max,scope=wearable-events

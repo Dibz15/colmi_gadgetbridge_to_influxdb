@@ -27,6 +27,7 @@ from app.influx import (
     find_manual_event_by_id,
     find_manual_events_in_range,
     find_sleep_entries_in_range,
+    find_sleep_entry_by_id,
     list_distinct_sensor_users,
     manual_event_id,
     write_event_points,
@@ -417,14 +418,16 @@ def post_sleep(payload: SleepIn, current_user: dict = Depends(get_current_user))
         )
 
     submission_ts = datetime.now(timezone.utc)
-    write_sleep_point(
+    entry_id = write_sleep_point(
         user=current_user["username"],
+        session_start=session["start_time"],
         sleep_date=session["sleep_date"],
         score=payload.score,
         qualifiers=payload.qualifiers,
         submission_ts=submission_ts,
     )
     return {
+        "entry_id": entry_id,
         "sleep_date": session["sleep_date"],
         "score": payload.score,
         "qualifiers": payload.qualifiers,
@@ -437,6 +440,11 @@ def get_sleep_history(start: str | None = None, end: str | None = None, current_
     ''' Read-only history of subjective sleep entries. Powers the
     "Recent nights" list on the Sleep tab. start/end are ISO date
     strings; defaults to the last 30 days through tomorrow.
+
+    Sorted by start_time (the session's own real timestamp), not
+    sleep_date - multiple entries can share a sleep_date (see
+    write_sleep_point's docstring for why), so sorting by date alone
+    wouldn't give a stable or meaningful order between same-day entries.
     '''
     now = datetime.now(timezone.utc)
     try:
@@ -446,58 +454,51 @@ def get_sleep_history(start: str | None = None, end: str | None = None, current_
         raise HTTPException(400, f"invalid start/end date: {e}") from e
 
     entries = find_sleep_entries_in_range(current_user["username"], start_dt, end_dt)
-    entries.sort(key=lambda e: e["sleep_date"] or "", reverse=True)
+    entries.sort(key=lambda e: e["start_time"] or "", reverse=True)
     return entries
 
 
-@app.patch("/sleep/{sleep_date}")
-def patch_sleep(sleep_date: str, payload: SleepUpdateIn, current_user: dict = Depends(get_current_user)):
-    ''' Edit an existing night's score/qualifiers. Relies on
-    write_sleep_point's fixed-per-date timestamp to overwrite cleanly -
-    no delete-and-rewrite needed, unlike event tag edits. The caller
-    (frontend) is expected to send every known qualifier explicitly as
-    true/false, not just the ones that are true - InfluxDB only
-    overwrites fields actually included in a write, so an omitted
-    qualifier that was previously true would otherwise silently persist
-    instead of being cleared.
+@app.patch("/sleep/{entry_id}")
+def patch_sleep(entry_id: str, payload: SleepUpdateIn, current_user: dict = Depends(get_current_user)):
+    ''' Edit an existing sleep entry's score/qualifiers, addressed by
+    its stable entry_id (not sleep_date - multiple entries can share a
+    date, see write_sleep_point's docstring). Relies on
+    write_sleep_point's fixed-per-session timestamp to overwrite
+    cleanly - no delete-and-rewrite needed, unlike event tag edits.
+    The caller (frontend) is expected to send every known qualifier
+    explicitly as true/false, not just the ones that are true -
+    InfluxDB only overwrites fields actually included in a write, so
+    an omitted qualifier that was previously true would otherwise
+    silently persist instead of being cleared.
     '''
     if not (1 <= payload.score <= 5):
         raise HTTPException(400, "score must be between 1 and 5")
 
     username = current_user["username"]
-    try:
-        date_start = datetime.fromisoformat(sleep_date).replace(tzinfo=timezone.utc)
-    except ValueError as e:
-        raise HTTPException(400, f"invalid sleep_date: {e}") from e
+    existing = find_sleep_entry_by_id(username, entry_id)
+    if existing is None:
+        raise HTTPException(404, "no sleep entry found for this id")
 
-    existing = find_sleep_entries_in_range(username, date_start, date_start + timedelta(days=1))
-    if not existing:
-        raise HTTPException(404, "no sleep entry found for this date")
-
-    write_sleep_point(
+    new_entry_id = write_sleep_point(
         user=username,
-        sleep_date=sleep_date,
+        session_start=existing["start_time"],
+        sleep_date=existing["sleep_date"],
         score=payload.score,
         qualifiers=payload.qualifiers,
         submission_ts=datetime.now(timezone.utc),
     )
-    return {"sleep_date": sleep_date, "score": payload.score, "qualifiers": payload.qualifiers}
+    return {"entry_id": new_entry_id, "sleep_date": existing["sleep_date"], "score": payload.score, "qualifiers": payload.qualifiers}
 
 
-@app.delete("/sleep/{sleep_date}")
-def delete_sleep(sleep_date: str, current_user: dict = Depends(get_current_user)):
-    ''' Delete a sleep entry entirely. '''
+@app.delete("/sleep/{entry_id}")
+def delete_sleep(entry_id: str, current_user: dict = Depends(get_current_user)):
+    ''' Delete a sleep entry entirely, addressed by its stable entry_id. '''
     username = current_user["username"]
-    try:
-        date_start = datetime.fromisoformat(sleep_date).replace(tzinfo=timezone.utc)
-    except ValueError as e:
-        raise HTTPException(400, f"invalid sleep_date: {e}") from e
+    existing = find_sleep_entry_by_id(username, entry_id)
+    if existing is None:
+        raise HTTPException(404, "no sleep entry found for this id")
 
-    existing = find_sleep_entries_in_range(username, date_start, date_start + timedelta(days=1))
-    if not existing:
-        raise HTTPException(404, "no sleep entry found for this date")
-
-    delete_sleep_entry(username, sleep_date)
+    delete_sleep_entry(username, entry_id)
     return {"ok": True}
 
 

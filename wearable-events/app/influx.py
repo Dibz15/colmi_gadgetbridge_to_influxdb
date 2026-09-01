@@ -38,6 +38,27 @@ def calendar_event_id(calendar: str, start_time: str, title: str) -> str:
     return hashlib.sha1(raw).hexdigest()[:12]
 
 
+def sleep_entry_id(user: str, session_start_iso: str) -> str:
+    ''' Deterministic id for a subjective sleep score entry, derived
+    from the underlying sleep SESSION's own start time - not from
+    sleep_date. Same pattern as calendar_event_id() above.
+
+    This is the fix for a real bug: two genuinely different sessions
+    can share the same sleep_date (e.g. one starting just after local
+    midnight, another starting just before the NEXT local midnight -
+    both correctly resolve to the same calendar day under the
+    "which day did this session start on" rule, but they're not the
+    same night). Keying entries by sleep_date alone meant the second
+    submission silently overwrote the first's score. Keying by the
+    session's own start time instead means only a genuine re-
+    submission for the SAME session (same start time) produces the
+    same id and correctly overwrites - two different sessions, even
+    on the same calendar date, get different ids and coexist.
+    '''
+    raw = f"{user}|{session_start_iso}".encode()
+    return hashlib.sha1(raw).hexdigest()[:12]
+
+
 def manual_event_id() -> str:
     return str(uuid.uuid4())
 
@@ -167,37 +188,45 @@ def write_event_points(*, user: str, tags: list[str], source: str, timestamp: da
     logger.debug(f"Wrote {len(tags)} event point(s) for event_id={event_id} tags={tags} user={user}")
 
 
-def write_sleep_point(*, user: str, sleep_date: str, score: int, qualifiers: dict,
-                       submission_ts: datetime):
-    ''' One point per night, keyed on sleep_date. Per spec §6, a repeat
-    submission for the same sleep_date should OVERWRITE the existing
-    point rather than creating a second one - InfluxDB naturally does
-    this because points with identical measurement+tag-set+timestamp
-    overwrite on write, so we deliberately use a fixed, deterministic
-    timestamp (midnight UTC of sleep_date) rather than submission_ts as
-    the point's _time. submission_ts is preserved separately as the
-    logged_at field for later analysis of reporting delay.
+def write_sleep_point(*, user: str, session_start: datetime, sleep_date: str, score: int,
+                       qualifiers: dict, submission_ts: datetime):
+    ''' One point per SESSION, not per date - anchored at the actual
+    session start time, with a deterministic entry_id (see
+    sleep_entry_id()) as the stable tag used for addressing edits/
+    deletes. Fixed a real bug: the old version anchored on a synthetic
+    "midnight of sleep_date" timestamp, so two different sessions
+    sharing a calendar date (one starting just after local midnight,
+    another just before the next one) silently overwrote each other.
+    Anchoring on the real session start + a start-time-derived id means
+    a genuine re-submission for the SAME session still overwrites
+    correctly (same start time -> same id -> same point), while two
+    different sessions never collide regardless of what date they
+    land on.
+
+    sleep_date is still written as a tag (not just a display label) -
+    kept for date-range querying convenience ("all entries logged
+    around Aug 31") even though it's no longer the uniqueness key.
     '''
+    entry_id = sleep_entry_id(user, session_start.isoformat())
     client = get_client()
     with client.write_api(write_options=SYNCHRONOUS) as write_api:
         p = (
             Point(SLEEP_MEASUREMENT)
             .tag("sleep_date", sleep_date)
             .tag("user", user)
+            .tag("entry_id", entry_id)
             .field("score", score)
             .field("logged_at", submission_ts.isoformat())
         )
         for qualifier, value in qualifiers.items():
             p = p.field(qualifier, bool(value))
 
-        # Fixed timestamp for the given sleep_date so re-submissions
-        # overwrite rather than accumulate.
-        point_ts = datetime.strptime(sleep_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        p = p.time(point_ts)
+        p = p.time(session_start)
 
         write_api.write(INFLUX_BUCKET, INFLUX_ORG, p)
 
-    logger.info(f"Wrote subjective_sleep point for {sleep_date}: score={score} user={user}")
+    logger.info(f"Wrote subjective_sleep point for {sleep_date} (entry_id={entry_id}): score={score} user={user}")
+    return entry_id
 
 
 def find_sleep_entries_in_range(user: str, start: datetime, end: datetime) -> list[dict]:
@@ -232,7 +261,7 @@ def find_sleep_entries_in_range(user: str, start: datetime, end: datetime) -> li
     # (a frontend-only concept) show up here with zero backend changes.
     KNOWN_NON_QUALIFIER_KEYS = {
         "_time", "_start", "_stop", "_measurement", "result", "table",
-        "sleep_date", "user", "score", "logged_at",
+        "sleep_date", "user", "entry_id", "score", "logged_at",
     }
 
     results = []
@@ -244,7 +273,9 @@ def find_sleep_entries_in_range(user: str, start: datetime, end: datetime) -> li
                 if k not in KNOWN_NON_QUALIFIER_KEYS and isinstance(v, bool)
             }
             results.append({
+                "entry_id": values.get("entry_id"),
                 "sleep_date": values.get("sleep_date"),
+                "start_time": record.get_time().isoformat(),
                 "score": values.get("score"),
                 "logged_at": values.get("logged_at"),
                 "qualifiers": qualifiers,
@@ -252,21 +283,69 @@ def find_sleep_entries_in_range(user: str, start: datetime, end: datetime) -> li
     return results
 
 
-def delete_sleep_entry(user: str, sleep_date: str):
-    ''' Unlike events, sleep_date and user are both TAGS on this
-    measurement (not a field like event_id), so InfluxDB's delete API -
-    which only matches on tags/measurement - can target this directly,
-    no timestamp-window workaround needed. Key names are still quoted
+def find_sleep_entry_by_id(user: str, entry_id: str) -> dict | None:
+    ''' Look up a single sleep entry by its stable entry_id, for the
+    edit/delete endpoints. entry_id is a tag, so this can be filtered
+    directly (unlike event_id for manual/calendar events, which is a
+    field and needs the pivot-then-filter workaround find_manual_event_by_id
+    uses).
+    '''
+    client = get_client()
+    query_api = client.query_api()
+
+    flux = f'''
+    from(bucket: "{INFLUX_BUCKET}")
+      |> range(start: -1825d)
+      |> filter(fn: (r) => r._measurement == "{SLEEP_MEASUREMENT}")
+      |> filter(fn: (r) => r.user == "{user}")
+      |> filter(fn: (r) => r.entry_id == "{entry_id}")
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+    '''
+
+    try:
+        tables = query_api.query(flux)
+    except Exception as e:
+        logger.error(f"Failed to look up sleep entry {entry_id} for user={user}: {e}")
+        return None
+
+    KNOWN_NON_QUALIFIER_KEYS = {
+        "_time", "_start", "_stop", "_measurement", "result", "table",
+        "sleep_date", "user", "entry_id", "score", "logged_at",
+    }
+
+    for table in tables:
+        for record in table.records:
+            values = record.values
+            qualifiers = {
+                k: v for k, v in values.items()
+                if k not in KNOWN_NON_QUALIFIER_KEYS and isinstance(v, bool)
+            }
+            return {
+                "entry_id": values.get("entry_id"),
+                "sleep_date": values.get("sleep_date"),
+                "start_time": record.get_time(),
+                "score": values.get("score"),
+                "logged_at": values.get("logged_at"),
+                "qualifiers": qualifiers,
+            }
+    return None
+
+
+def delete_sleep_entry(user: str, entry_id: str):
+    ''' entry_id and user are both TAGS on this measurement, so
+    InfluxDB's delete API - which only matches on tags/measurement -
+    can target this directly. entry_id alone is already globally
+    unique (derived from user + session start time), so unlike
+    sleep_date previously, no narrow timestamp window is needed here -
+    a wide delete range is safe, since the entry_id tag match can only
+    ever hit the one point it identifies. Key names still quoted
     defensively per the lesson from delete_event_tag_point (InfluxDB's
     delete predicate parser treats some bare words as reserved).
     '''
     client = get_client()
     delete_api = client.delete_api()
-    point_ts = datetime.strptime(sleep_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    start = point_ts
-    stop = point_ts + timedelta(seconds=1)
-    predicate = f'_measurement="{SLEEP_MEASUREMENT}" AND "sleep_date"="{sleep_date}" AND "user"="{user}"'
-    delete_api.delete(start, stop, predicate, bucket=INFLUX_BUCKET, org=INFLUX_ORG)
+    predicate = f'_measurement="{SLEEP_MEASUREMENT}" AND "entry_id"="{entry_id}" AND "user"="{user}"'
+    delete_api.delete("1970-01-01T00:00:00Z", "2100-01-01T00:00:00Z", predicate, bucket=INFLUX_BUCKET, org=INFLUX_ORG)
 
 
 def find_last_completed_sleep_session(user: str, lookback_days: int = 7) -> dict | None:

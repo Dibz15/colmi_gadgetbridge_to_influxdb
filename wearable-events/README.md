@@ -1,7 +1,7 @@
 # wearable-events
 
 Calendar tagging + subjective sleep score, as a companion to the
-[Colmi ring parser](../parser/README.md). Adds a
+[Colmi ring parser](../colmi_gadgetbridge_to_influxdb/README.md). Adds a
 "context" layer on top of raw sensor data — manual one-tap tags
 (caffeine, alcohol, social), calendar-derived tags (meeting, deep-work,
 commute, resolved from ICS feeds via keyword rules), and a nightly
@@ -165,8 +165,8 @@ cookie (`Depends(get_current_user)` → `401` if missing/invalid).
 | POST | `/calendar_events/{event_id}/reset_tags` | Undo a manual override - reclassify against current rules and clear `manually_tagged` |
 | POST | `/sleep` | Submit a 1–5 sleep score, resolved against the most recent completed sleep session |
 | GET | `/sleep` | Read-only history of past sleep entries (default: last 30 days) |
-| PATCH | `/sleep/{sleep_date}` | Edit an existing night's score/qualifiers |
-| DELETE | `/sleep/{sleep_date}` | Delete a sleep entry |
+| PATCH | `/sleep/{entry_id}` | Edit an existing sleep entry's score/qualifiers |
+| DELETE | `/sleep/{entry_id}` | Delete a sleep entry |
 | GET / POST | `/calendars` | List / add an ICS calendar feed |
 | PATCH / DELETE | `/calendars/{id}` | Update / remove a calendar |
 | POST | `/calendars/{id}/sync` | Manually trigger a sync for one calendar |
@@ -190,6 +190,34 @@ Applied per calendar event (`app/ics_sync.py::classify_event`):
 4. If no `context` rule matches, the calendar's `default_tag` is used as
    a fallback — every event ends up with at least one context tag.
 5. Other categories contribute nothing if nothing matches (no fallback).
+
+## Sleep entry addressing (entry_id, not sleep_date)
+
+Sleep entries are addressed by a stable `entry_id` (deterministic hash
+of `user + session start time`), not by `sleep_date`. This is a fix
+for a real bug: two genuinely different sleep sessions can share the
+same calendar date - most commonly one starting just after local
+midnight and another starting just before the *next* local midnight -
+and both correctly resolve to the same `sleep_date` under the
+"which day did this session start on" rule. Keying entries by
+`sleep_date` alone meant the second submission silently overwrote the
+first's score. Anchoring each point at its own session's real start
+time, with an id derived from that same start time, means a genuine
+*re-submission* for the same session (same start time) still produces
+the same id and correctly overwrites, while two different sessions -
+even sharing a date - get different ids and coexist. This is also
+what makes napping representable: a nap is just another session with
+its own start time.
+
+`sleep_date` is still written as a tag for date-range querying
+convenience, and still shown in the UI (alongside the session's HH:MM,
+which is what actually disambiguates same-day entries at a glance) -
+it's just no longer the uniqueness key.
+
+**Migration:** entries written before this fix don't have an
+`entry_id` tag and won't be editable/deletable until migrated - run
+`scripts/migrate_sleep_entry_ids.py` once (see the script's own
+docstring for usage). Safe to run multiple times.
 
 ## Manual tag overrides (Timeline UI editing)
 

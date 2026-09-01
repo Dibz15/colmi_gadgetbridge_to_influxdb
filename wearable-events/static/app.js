@@ -172,7 +172,7 @@ document.getElementById("custom-tag-submit").addEventListener("click", () => {
 // omitting a previously-true qualifier would silently leave it set
 // instead of clearing it - explicit false is required to actually
 // un-set one.
-const KNOWN_SLEEP_QUALIFIERS = ["groggy", "woke_up_often", "vivid_dreams", "racing_thoughts"];
+const KNOWN_SLEEP_QUALIFIERS = ["groggy", "woke_up_often", "vivid_dreams"];
 
 function buildQualifiersPayload(selectedSet) {
   const qualifiers = {};
@@ -245,16 +245,27 @@ document.getElementById("sleep-submit").addEventListener("click", async () => {
 });
 
 // --- Sleep history ---
-const sleepEditDrafts = new Map(); // sleep_date -> { score, qualifiers: Set }
+const sleepEditDrafts = new Map(); // entry_id -> { score, qualifiers: Set }
+
+function localTimeString(isoTimestamp) {
+  const d = new Date(isoTimestamp);
+  const pad = n => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function renderSleepEntryReadonly(entry) {
   const qualifierChips = KNOWN_SLEEP_QUALIFIERS
     .filter(q => entry.qualifiers && entry.qualifiers[q])
     .map(q => `<span class="chip-small">${humanizeQualifierLabel(q)}</span>`)
     .join("");
+  // HH:MM alongside the date - multiple entries can now share a date
+  // (e.g. one session starting just after local midnight, another
+  // just before the next one; naps too), so the time is what actually
+  // distinguishes them at a glance.
+  const timeLabel = entry.start_time ? ` ${localTimeString(entry.start_time)}` : "";
   return `
     <div class="sleep-entry-main">
-      <span class="sleep-entry-date">${entry.sleep_date}</span>
+      <span class="sleep-entry-date">${escapeHtml(entry.sleep_date)}${timeLabel}</span>
       <span class="sleep-entry-score">${"●".repeat(entry.score)}${"○".repeat(5 - entry.score)}</span>
       <button class="small-btn sleep-edit-btn">Edit</button>
     </div>
@@ -263,7 +274,7 @@ function renderSleepEntryReadonly(entry) {
 }
 
 function renderSleepEntryEditForm(entry) {
-  const draft = sleepEditDrafts.get(entry.sleep_date);
+  const draft = sleepEditDrafts.get(entry.entry_id);
   const scoreButtons = [1, 2, 3, 4, 5].map(n => `
     <button class="sleep-btn ${draft.score === n ? "selected" : ""}" data-score="${n}">${n}</button>
   `).join("");
@@ -272,7 +283,7 @@ function renderSleepEntryEditForm(entry) {
   `).join("");
 
   return `
-    <div class="sleep-edit-form" data-sleep-date="${entry.sleep_date}">
+    <div class="sleep-edit-form" data-entry-id="${escapeHtml(entry.entry_id)}">
       <div class="sleep-scale sleep-edit-scale">${scoreButtons}</div>
       <div class="qualifier-chips">${chips}</div>
       <div class="timeline-edit-actions">
@@ -286,13 +297,13 @@ function renderSleepEntryEditForm(entry) {
 }
 
 function rerenderSleepEntry(row, entry) {
-  if (sleepEditDrafts.has(entry.sleep_date)) {
+  if (sleepEditDrafts.has(entry.entry_id)) {
     row.innerHTML = renderSleepEntryEditForm(entry);
     wireSleepEditForm(row, entry);
   } else {
     row.innerHTML = renderSleepEntryReadonly(entry);
     row.querySelector(".sleep-edit-btn").addEventListener("click", () => {
-      sleepEditDrafts.set(entry.sleep_date, {
+      sleepEditDrafts.set(entry.entry_id, {
         score: entry.score,
         qualifiers: new Set(KNOWN_SLEEP_QUALIFIERS.filter(q => entry.qualifiers && entry.qualifiers[q])),
       });
@@ -304,7 +315,7 @@ function rerenderSleepEntry(row, entry) {
 function wireSleepEditForm(row, entry) {
   const form = row.querySelector(".sleep-edit-form");
   const status = form.querySelector(".sleep-edit-status");
-  const draft = sleepEditDrafts.get(entry.sleep_date);
+  const draft = sleepEditDrafts.get(entry.entry_id);
 
   form.querySelectorAll(".sleep-edit-scale .sleep-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -323,18 +334,18 @@ function wireSleepEditForm(row, entry) {
   });
 
   form.querySelector(".sleep-cancel-btn").addEventListener("click", () => {
-    sleepEditDrafts.delete(entry.sleep_date);
+    sleepEditDrafts.delete(entry.entry_id);
     rerenderSleepEntry(row, entry);
   });
 
   form.querySelector(".sleep-save-btn").addEventListener("click", async () => {
     status.textContent = "Saving...";
     try {
-      await api(`/sleep/${entry.sleep_date}`, {
+      await api(`/sleep/${entry.entry_id}`, {
         method: "PATCH",
         body: JSON.stringify({ score: draft.score, qualifiers: buildQualifiersPayload(draft.qualifiers) }),
       });
-      sleepEditDrafts.delete(entry.sleep_date);
+      sleepEditDrafts.delete(entry.entry_id);
       loadSleepHistory();
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
@@ -342,11 +353,12 @@ function wireSleepEditForm(row, entry) {
   });
 
   form.querySelector(".sleep-delete-btn").addEventListener("click", async () => {
-    if (!confirm(`Delete the sleep entry for ${entry.sleep_date}? This can't be undone.`)) return;
+    const timeLabel = entry.start_time ? ` ${localTimeString(entry.start_time)}` : "";
+    if (!confirm(`Delete the sleep entry for ${entry.sleep_date}${timeLabel}? This can't be undone.`)) return;
     status.textContent = "Deleting...";
     try {
-      await api(`/sleep/${entry.sleep_date}`, { method: "DELETE" });
-      sleepEditDrafts.delete(entry.sleep_date);
+      await api(`/sleep/${entry.entry_id}`, { method: "DELETE" });
+      sleepEditDrafts.delete(entry.entry_id);
       loadSleepHistory();
     } catch (e) {
       status.textContent = `Error: ${e.message}`;

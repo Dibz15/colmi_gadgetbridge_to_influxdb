@@ -9,6 +9,7 @@
 # The one-shot behaviour is still available if you want it: override the
 # entrypoint/command back to `/app/gadgetbridge_to_influxdb.py` and drive
 # it from an external cron/scheduler instead.
+# comment
 
 FROM python:slim-bullseye
 

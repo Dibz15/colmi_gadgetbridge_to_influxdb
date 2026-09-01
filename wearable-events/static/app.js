@@ -172,7 +172,7 @@ document.getElementById("custom-tag-submit").addEventListener("click", () => {
 // omitting a previously-true qualifier would silently leave it set
 // instead of clearing it - explicit false is required to actually
 // un-set one.
-const KNOWN_SLEEP_QUALIFIERS = ["groggy", "woke_up_often", "vivid_dreams"];
+const KNOWN_SLEEP_QUALIFIERS = ["groggy", "woke_up_often", "vivid_dreams", "racing_thoughts"];
 
 function buildQualifiersPayload(selectedSet) {
   const qualifiers = {};

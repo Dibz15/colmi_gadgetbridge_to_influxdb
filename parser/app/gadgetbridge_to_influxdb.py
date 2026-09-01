@@ -120,7 +120,8 @@ SLEEP_STAGE_MAP = {
     2: "light",
     3: "deep",
     4: "rem",
-    1: "awake",
+    1: "unknown",
+    5: "awake"
 }
 
 # Safety cap on catch-up distance if the checkpoint turns out to be

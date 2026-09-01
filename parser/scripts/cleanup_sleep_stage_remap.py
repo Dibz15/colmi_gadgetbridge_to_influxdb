@@ -45,8 +45,8 @@ GADGETBRIDGE_USER = os.getenv("GADGETBRIDGE_USER", "primary")
 
 # EDIT THESE to match your actual before/after SLEEP_STAGE_MAP change.
 # Defaults below match: shipped default (OLD) -> a full remapping (NEW).
-OLD_STAGE_MAP = {2: "light", 3: "deep", 4: "rem", 1: "awake"}
-NEW_STAGE_MAP = {2: "light", 3: "deep", 4: "rem", 5: "awake"}
+OLD_STAGE_MAP = {2: "light", 3: "deep", 4: "rem", 5: "stage_5"}
+NEW_STAGE_MAP = {2: "light", 3: "deep", 4: "rem", 5: "awake", 1: "unknown"}
 
 # Wide time range so this sweeps up all history regardless of how far
 # back your synced data goes - costs nothing extra if your actual
